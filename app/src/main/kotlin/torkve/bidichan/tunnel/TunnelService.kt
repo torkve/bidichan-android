@@ -12,7 +12,6 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
-import android.os.ParcelFileDescriptor
 import android.util.Log
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -43,7 +42,6 @@ class TunnelService : VpnService() {
 
     private val io = Executors.newCachedThreadPool()
     private var bridge: GoBridge? = null
-    private var tunnel: ParcelFileDescriptor? = null
     private var profile: Profile? = null
     private val running = AtomicBoolean(false)
     private var restoring = false
@@ -93,6 +91,10 @@ class TunnelService : VpnService() {
             return
         }
 
+        // Resolve before the packet interface exists: once it is up, a name
+        // lookup can be routed into the tunnel we have not finished building.
+        val addr = resolveServerAddress(this, p.serverAddress)
+
         val fd = if (p.enableTun) establishInterface(p) else 0
         if (p.enableTun && fd == 0) {
             fail("the system did not grant a packet interface")
@@ -105,7 +107,7 @@ class TunnelService : VpnService() {
 
         try {
             b.start(
-                addr = p.serverAddress,
+                addr = addr,
                 hostname = p.hostname,
                 pskHex = psk,
                 path = p.path,
@@ -135,8 +137,12 @@ class TunnelService : VpnService() {
 
     /**
      * Builds the system packet interface from the profile and hands its
-     * descriptor to the core. detachFd transfers ownership: from here on the
-     * core closes it, and this service must not.
+     * descriptor to the core.
+     *
+     * detachFd transfers ownership, so nothing is kept here: from this point
+     * the core owns the descriptor and closes it with the channel that used
+     * it. Establishing again replaces the previous interface, so there is
+     * nothing for this service to tear down either.
      */
     private fun establishInterface(p: Profile): Int {
         val builder = Builder()
@@ -170,7 +176,6 @@ class TunnelService : VpnService() {
         runCatching { builder.addDisallowedApplication(packageName) }
 
         val pfd = builder.establish() ?: return 0
-        tunnel = pfd
         return pfd.detachFd()
     }
 
@@ -278,7 +283,6 @@ class TunnelService : VpnService() {
      */
     private fun restoreTunChannel(b: GoBridge, p: Profile) {
         if (!p.enableTun) return
-        runCatching { tunnel?.close() }
         val fd = establishInterface(p)
         if (fd == 0) {
             Log.e(TAG, "could not re-establish the packet interface")
@@ -345,10 +349,10 @@ class TunnelService : VpnService() {
             runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb) }
         }
         networkCallback = null
+        // Stopping the core closes the descriptor it owns, and the system tears
+        // the interface down with this service.
         bridge?.stop()
         bridge = null
-        runCatching { tunnel?.close() }
-        tunnel = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
