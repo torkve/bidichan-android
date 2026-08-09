@@ -1,0 +1,17 @@
+# Gradle / Android
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+captures/
+.cxx/
+
+# The gomobile-built binding is produced by the build, never committed.
+app/libs/bidichan.aar
+
+# IDE
+.idea/
+*.iml
