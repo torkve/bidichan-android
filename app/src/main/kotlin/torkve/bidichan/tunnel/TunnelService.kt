@@ -13,12 +13,14 @@ import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.util.Log
+import android.net.ProxyInfo
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import torkve.bidichan.MainActivity
 import torkve.bidichan.R
+import torkve.bidichan.core.AppLog
 import torkve.bidichan.core.ChannelConfig
 import torkve.bidichan.core.Control
 import torkve.bidichan.core.ControlDecode
@@ -54,6 +56,11 @@ class TunnelService : VpnService() {
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
@@ -63,11 +70,11 @@ class TunnelService : VpnService() {
         }
         val profileId = intent?.getStringExtra(EXTRA_PROFILE_ID)
         if (profileId == null) {
-            Log.w(TAG, "start without a profile; ignoring")
+            AppLog.log("start without a profile; ignoring")
             return START_NOT_STICKY
         }
         if (!running.compareAndSet(false, true)) {
-            Log.i(TAG, "already running")
+            AppLog.log("already running")
             return START_STICKY
         }
         startForeground(NOTIFICATION_ID, notification("Connecting…"))
@@ -124,10 +131,10 @@ class TunnelService : VpnService() {
             return
         }
 
-        Log.i(TAG, "peer is up")
+        AppLog.log("peer is up")
         if (p.enableTun) {
             runCatching { openTunChannel(b, p) }
-                .onFailure { Log.e(TAG, "packet channel: ${it.message}") }
+                .onFailure { AppLog.log("packet channel: ${it.message}") }
         }
         openDefaultChannels(b, p)
         updateNotification("Connected")
@@ -172,6 +179,22 @@ class TunnelService : VpnService() {
             }
         }
 
+        // A proxy channel the profile wants published: the platform can point
+        // apps at an HTTP proxy reachable over the tunnel. SOCKS5 has no such
+        // hook, and neither does anything below API 29 — there apps have to be
+        // pointed at the listener themselves.
+        val published = p.channels.firstOrNull { it.kind.isProxy && it.routeSystem }
+        if (published != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (published.kind == ChannelConfig.Kind.HTTP) {
+                runCatching {
+                    builder.setHttpProxy(ProxyInfo.buildDirectProxy("127.0.0.1", published.port))
+                    AppLog.log("publishing the http proxy on port ${published.port} to the system")
+                }.onFailure { AppLog.log("could not publish the proxy: ${it.message}") }
+            } else {
+                AppLog.log("a socks5 proxy cannot be published system-wide; point apps at it")
+            }
+        }
+
         // Never route ourselves through ourselves.
         runCatching { builder.addDisallowedApplication(packageName) }
 
@@ -186,7 +209,7 @@ class TunnelService : VpnService() {
         val gw6 = if (p.tunCidr6.isEmpty()) null else gatewayCidr6(p.tunCidr6)
         val request = Control.openTun(Control.TunArgs(cidr = gw, cidr6 = gw6, mtu = p.tunMtu))
         ControlDecode.open(b.control(request))
-        Log.i(TAG, "packet channel is open")
+        AppLog.log("packet channel is open")
     }
 
     private fun openDefaultChannels(b: GoBridge, p: Profile) {
@@ -211,7 +234,7 @@ class TunnelService : VpnService() {
                 )
             }
             runCatching { recordChannel(request, b.control(request)) }
-                .onFailure { Log.w(TAG, "channel ${c.displayName}: ${it.message}") }
+                .onFailure { AppLog.log("channel ${c.displayName}: ${it.message}") }
         }
     }
 
@@ -234,7 +257,7 @@ class TunnelService : VpnService() {
                 val previous = known
                 known = network
                 if (previous != null && previous != network) {
-                    Log.i(TAG, "network path changed; redialing now")
+                    AppLog.log("network path changed; redialing now")
                     bridge?.networkChanged()
                 }
             }
@@ -246,18 +269,18 @@ class TunnelService : VpnService() {
     private fun onLinkState(state: GoBridge.LinkState) {
         when (state) {
             GoBridge.LinkState.UP -> {
-                Log.i(TAG, "link up")
+                AppLog.log("link up")
                 // While a lost session is being rebuilt the link comes up
                 // before the channels are back; stay in "reconnecting" until
                 // they are, so we never claim to be connected but empty.
                 if (!restoring) updateNotification("Connected")
             }
             GoBridge.LinkState.DOWN -> {
-                Log.i(TAG, "link down — channels are stalled while the core redials")
+                AppLog.log("link down — channels are stalled while the core redials")
                 updateNotification("Reconnecting…")
             }
             GoBridge.LinkState.FAILED -> {
-                Log.i(TAG, "session lost — rebuilding it")
+                AppLog.log("session lost — rebuilding it")
                 restoring = true
                 updateNotification("Reconnecting…")
             }
@@ -269,7 +292,7 @@ class TunnelService : VpnService() {
         val b = bridge ?: return
         val p = profile ?: return
         io.execute {
-            Log.i(TAG, "session reestablished: restoring channels")
+            AppLog.log("session reestablished: restoring channels")
             restoreTunChannel(b, p)
             replayChannels(b)
             restoring = false
@@ -285,12 +308,12 @@ class TunnelService : VpnService() {
         if (!p.enableTun) return
         val fd = establishInterface(p)
         if (fd == 0) {
-            Log.e(TAG, "could not re-establish the packet interface")
+            AppLog.log("could not re-establish the packet interface")
             return
         }
         b.setTunFd(fd)
         runCatching { openTunChannel(b, p) }
-            .onFailure { Log.e(TAG, "packet channel: reopen failed: ${it.message}") }
+            .onFailure { AppLog.log("packet channel: reopen failed: ${it.message}") }
     }
 
     /** Re-issues the channel opens, re-keyed to the new session's ids. */
@@ -302,7 +325,7 @@ class TunnelService : VpnService() {
         }
         for (channel in previous) {
             runCatching { recordChannel(channel.requestJson, b.control(channel.requestJson)) }
-                .onFailure { Log.w(TAG, "channel reopen failed: ${it.message}") }
+                .onFailure { AppLog.log("channel reopen failed: ${it.message}") }
         }
     }
 
@@ -310,7 +333,7 @@ class TunnelService : VpnService() {
      * Remembers a successful channel open, and forgets one that was closed, so
      * a rebuilt session can be brought back to the same set of channels.
      */
-    fun recordChannel(request: String, response: String) {
+    private fun recordChannel(request: String, response: String) {
         val obj = runCatching { Json.parseToJsonElement(request).jsonObject }.getOrNull() ?: return
         when (obj["action"]?.jsonPrimitive?.content) {
             "open_forward", "open_http", "open_socks5" -> {
@@ -331,14 +354,14 @@ class TunnelService : VpnService() {
      */
     private fun awaitEnd(b: GoBridge) {
         val reason = b.waitUntilDone()
-        Log.i(TAG, "core stopped: ${reason ?: "clean shutdown"}")
+        AppLog.log("core stopped: ${reason ?: "clean shutdown"}")
         shutdown()
     }
 
     // MARK: - Teardown
 
     private fun fail(message: String) {
-        Log.e(TAG, "start failed: $message")
+        AppLog.log("start failed: $message")
         lastError = message
         shutdown()
     }
@@ -359,12 +382,13 @@ class TunnelService : VpnService() {
 
     override fun onDestroy() {
         shutdown()
+        instance = null
         io.shutdownNow()
         super.onDestroy()
     }
 
     override fun onRevoke() {
-        Log.i(TAG, "the packet interface was revoked")
+        AppLog.log("the packet interface was revoked")
         shutdown()
     }
 
@@ -410,6 +434,23 @@ class TunnelService : VpnService() {
         }
     }
 
+    /**
+     * Forwards a control request to the core. The UI runs in this same process,
+     * so it reaches the running tunnel directly rather than through IPC — but
+     * the call blocks on the core, so it must not run on the main thread.
+     */
+    private fun controlNow(json: String): String {
+        val b = bridge ?: throw IllegalStateException("the tunnel is not running")
+        val response = b.control(json)
+        recordChannel(json, response)
+        return response
+    }
+
+    private fun openShellNow(term: String, rows: Int, cols: Int): GoShell {
+        val b = bridge ?: throw IllegalStateException("the tunnel is not running")
+        return b.openShell(term, rows, cols)
+    }
+
     companion object {
         private const val TAG = "bidichan"
         private const val CHANNEL_ID = "tunnel"
@@ -436,5 +477,20 @@ class TunnelService : VpnService() {
                 Intent(context, TunnelService::class.java).setAction(ACTION_STOP)
             )
         }
+
+        /** The running service, or null. Same process, so this is a plain reference. */
+        @Volatile
+        private var instance: TunnelService? = null
+
+        val isRunning: Boolean get() = instance != null
+
+        /** Blocks on the core; call from a background thread. */
+        fun control(json: String): String =
+            instance?.controlNow(json) ?: throw IllegalStateException("the tunnel is not running")
+
+        /** Blocks; call from a background thread. */
+        fun openShell(term: String, rows: Int, cols: Int): GoShell =
+            instance?.openShellNow(term, rows, cols)
+                ?: throw IllegalStateException("the tunnel is not running")
     }
 }

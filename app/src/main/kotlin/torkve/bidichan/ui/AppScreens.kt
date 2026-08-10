@@ -1,6 +1,5 @@
 package torkve.bidichan.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -10,11 +9,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
@@ -28,6 +26,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -37,16 +36,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import torkve.bidichan.AppModel
+import torkve.bidichan.core.ChannelConfig
+import torkve.bidichan.core.ChannelSnapshot
 import torkve.bidichan.core.Profile
 
-/** Which screen is showing. Deliberately tiny — this app has two. */
+/** Where the user is. Small enough to keep explicit rather than pull in a router. */
 private sealed interface Screen {
     data object List : Screen
     data class Edit(val profile: Profile) : Screen
+    data class Connection(val profile: Profile) : Screen
+    data class Channel(val channel: ChannelSnapshot) : Screen
+    data object AddChannel : Screen
+    data object Shell : Screen
+    data object Logs : Screen
 }
 
 @Composable
@@ -56,19 +60,67 @@ fun AppScreens(
     onDisconnect: () -> Unit,
 ) {
     var screen by remember { mutableStateOf<Screen>(Screen.List) }
+    val profiles by model.profiles.collectAsState()
+    val activeId by model.activeProfileId.collectAsState()
+
+    // The connection screen belongs to a profile; if it goes away, so does the
+    // screen looking at it.
+    val active = profiles.firstOrNull { it.id == activeId }
+
     when (val s = screen) {
         is Screen.List -> ProfileListScreen(
             model = model,
-            onConnect = onConnect,
-            onDisconnect = onDisconnect,
+            onConnect = { id ->
+                model.connecting(id)
+                onConnect(id)
+                profiles.firstOrNull { it.id == id }?.let { screen = Screen.Connection(it) }
+            },
+            onOpen = { screen = Screen.Connection(it) },
             onEdit = { screen = Screen.Edit(it) },
             onAdd = { screen = Screen.Edit(Profile()) },
+            onLogs = { screen = Screen.Logs },
         )
+
         is Screen.Edit -> ProfileEditScreen(
             model = model,
             initial = s.profile,
             onDone = { screen = Screen.List },
         )
+
+        is Screen.Connection -> ConnectionScreen(
+            model = model,
+            profile = active ?: s.profile,
+            onBack = { screen = Screen.List },
+            onDisconnect = {
+                onDisconnect()
+                screen = Screen.List
+            },
+            onAddChannel = { screen = Screen.AddChannel },
+            onChannel = { screen = Screen.Channel(it) },
+            onShell = { screen = Screen.Shell },
+            onLogs = { screen = Screen.Logs },
+        )
+
+        is Screen.Channel -> ChannelDetailScreen(
+            model = model,
+            channel = s.channel,
+            onBack = { screen = Screen.Connection(active ?: Profile()) },
+        )
+
+        is Screen.AddChannel -> AddChannelScreen(
+            onOpen = { config ->
+                model.openChannel(config)
+                screen = Screen.Connection(active ?: Profile())
+            },
+            onCancel = { screen = Screen.Connection(active ?: Profile()) },
+        )
+
+        is Screen.Shell -> ShellScreen(
+            model = model,
+            onBack = { screen = Screen.Connection(active ?: Profile()) },
+        )
+
+        is Screen.Logs -> LogScreen(model = model, onBack = { screen = Screen.List })
     }
 }
 
@@ -77,9 +129,10 @@ fun AppScreens(
 private fun ProfileListScreen(
     model: AppModel,
     onConnect: (String) -> Unit,
-    onDisconnect: () -> Unit,
+    onOpen: (Profile) -> Unit,
     onEdit: (Profile) -> Unit,
     onAdd: () -> Unit,
+    onLogs: () -> Unit,
 ) {
     val profiles by model.profiles.collectAsState()
     val status by model.status.collectAsState()
@@ -87,7 +140,12 @@ private fun ProfileListScreen(
     val activeId by model.activeProfileId.collectAsState()
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("bidichan") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("bidichan") },
+                actions = { TextButton(onClick = onLogs) { Text("Logs") } },
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(onClick = onAdd) {
                 Icon(Icons.Default.Add, contentDescription = "Add a profile")
@@ -100,7 +158,7 @@ private fun ProfileListScreen(
                 Card(Modifier.fillMaxWidth().padding(12.dp)) {
                     Column(Modifier.padding(12.dp)) {
                         Text(message, style = MaterialTheme.typography.bodyMedium)
-                        Button(onClick = { model.clearError() }) { Text("Dismiss") }
+                        TextButton(onClick = { model.clearError() }) { Text("Dismiss") }
                     }
                 }
             }
@@ -115,11 +173,10 @@ private fun ProfileListScreen(
                 items(profiles, key = { it.id }) { profile ->
                     ProfileRow(
                         profile = profile,
-                        isActive = profile.id == activeId,
-                        isLive = model.isLive,
+                        isActive = profile.id == activeId && model.isLive,
                         onEdit = { onEdit(profile) },
+                        onOpen = { onOpen(profile) },
                         onConnect = { onConnect(profile.id) },
-                        onDisconnect = onDisconnect,
                         onDelete = { model.delete(profile) },
                     )
                 }
@@ -129,30 +186,12 @@ private fun ProfileListScreen(
 }
 
 @Composable
-private fun StatusRow(status: String) {
-    val colour = when (status) {
-        "Connected" -> Color(0xFF2E7D32)
-        "Reconnecting…", "Connecting…" -> Color(0xFFEF6C00)
-        else -> Color.Gray
-    }
-    Row(
-        Modifier.fillMaxWidth().padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Spacer(Modifier.size(10.dp).clip(CircleShape).background(colour))
-        Spacer(Modifier.width(10.dp))
-        Text(status, style = MaterialTheme.typography.bodyLarge)
-    }
-}
-
-@Composable
 private fun ProfileRow(
     profile: Profile,
     isActive: Boolean,
-    isLive: Boolean,
     onEdit: () -> Unit,
+    onOpen: () -> Unit,
     onConnect: () -> Unit,
-    onDisconnect: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
@@ -174,13 +213,43 @@ private fun ProfileRow(
                 }
             }
             Spacer(Modifier.size(8.dp))
-            if (isActive && isLive) {
-                Button(onClick = onDisconnect) { Text("Disconnect") }
-            } else {
-                Button(onClick = onConnect, enabled = profile.serverAddress.isNotEmpty()) {
-                    Text("Connect")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (isActive) {
+                    Button(onClick = onOpen) { Text("Open") }
+                } else {
+                    Button(onClick = onConnect, enabled = profile.serverAddress.isNotEmpty()) {
+                        Text("Connect")
+                    }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddChannelScreen(onOpen: (ChannelConfig) -> Unit, onCancel: () -> Unit) {
+    var config by remember { mutableStateOf(ChannelConfig()) }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Add channel") },
+                navigationIcon = {
+                    IconButton(onClick = onCancel) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Cancel")
+                    }
+                },
+                actions = {
+                    TextButton(
+                        onClick = { onOpen(config) },
+                        enabled = config.isValid(),
+                    ) { Text("Open") }
+                },
+            )
+        },
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize().padding(16.dp)) {
+            ChannelFields(config) { config = it }
         }
     }
 }
@@ -190,8 +259,44 @@ private fun ProfileRow(
 private fun ProfileEditScreen(model: AppModel, initial: Profile, onDone: () -> Unit) {
     var p by remember { mutableStateOf(initial) }
     var psk by remember { mutableStateOf(model.psk(initial)) }
+    var editing by remember { mutableStateOf<ChannelConfig?>(null) }
 
-    Scaffold(topBar = { TopAppBar(title = { Text(p.name.ifEmpty { "Profile" }) }) }) { padding ->
+    val target = editing
+    if (target != null) {
+        ChannelConfigEditor(
+            initial = target,
+            onDone = { edited ->
+                p = if (p.channels.any { it.id == edited.id }) {
+                    p.copy(channels = p.channels.map { if (it.id == edited.id) edited else it })
+                } else {
+                    p.copy(channels = p.channels + edited)
+                }
+                editing = null
+            },
+            onCancel = { editing = null },
+        )
+        return
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(p.name.ifEmpty { "Profile" }) },
+                navigationIcon = {
+                    IconButton(onClick = onDone) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Cancel")
+                    }
+                },
+                actions = {
+                    TextButton(onClick = {
+                        model.upsert(p)
+                        if (psk.isNotBlank()) model.setPsk(p, psk)
+                        onDone()
+                    }) { Text("Save") }
+                },
+            )
+        },
+    ) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize().padding(16.dp)) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -225,17 +330,79 @@ private fun ProfileEditScreen(model: AppModel, initial: Profile, onDone: () -> U
                             "where they left off.",
                         style = MaterialTheme.typography.bodySmall,
                     )
+                }
+            }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = {
-                            model.upsert(p)
-                            if (psk.isNotBlank()) model.setPsk(p, psk)
-                            onDone()
-                        }) { Text("Save") }
-                        Button(onClick = onDone) { Text("Cancel") }
+            item {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 20.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column {
+                        Text("Default channels", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Opened automatically once this profile connects.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    TextButton(onClick = { editing = ChannelConfig() }) { Text("Add") }
+                }
+            }
+
+            items(p.channels, key = { it.id }) { channel ->
+                Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f).clickable { editing = channel }) {
+                            Text(channel.displayName, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "${channel.kind.title} · ${channel.listenAddr}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        IconButton(onClick = {
+                            p = p.copy(channels = p.channels.filterNot { it.id == channel.id })
+                        }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Remove")
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChannelConfigEditor(
+    initial: ChannelConfig,
+    onDone: (ChannelConfig) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var config by remember { mutableStateOf(initial) }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Default channel") },
+                navigationIcon = {
+                    IconButton(onClick = onCancel) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Cancel")
+                    }
+                },
+                actions = {
+                    TextButton(onClick = { onDone(config) }, enabled = config.isValid()) {
+                        Text("Done")
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize().padding(16.dp)) {
+            ChannelFields(config) { config = it }
         }
     }
 }

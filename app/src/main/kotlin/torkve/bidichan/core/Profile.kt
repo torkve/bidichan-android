@@ -69,6 +69,12 @@ data class ChannelConfig(
     val port: Int = 3128,
     /** "host:port"; forwards only. */
     val target: String = "127.0.0.1:80",
+    /**
+     * Proxies only: publish it to the system so other apps go through it. The
+     * platform accepts an HTTP proxy on the packet interface from API 29; below
+     * that, and for SOCKS5, apps have to be pointed at it themselves.
+     */
+    val routeSystem: Boolean = true,
 ) {
     @Serializable
     enum class Kind {
