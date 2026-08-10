@@ -23,6 +23,16 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Opens a shared profile link. The payload rides in the fragment,
+                 so nothing leaves the device even if the link is opened
+                 elsewhere first. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="bidichan" android:host="profile" />
+            </intent-filter>
         </activity>
 
         <!-- The tunnel host. BIND_VPN_SERVICE is the fixed platform permission

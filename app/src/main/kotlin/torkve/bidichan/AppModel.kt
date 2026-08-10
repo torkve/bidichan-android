@@ -16,6 +16,7 @@ import torkve.bidichan.core.ChannelSnapshot
 import torkve.bidichan.core.Control
 import torkve.bidichan.core.ControlDecode
 import torkve.bidichan.core.Profile
+import torkve.bidichan.core.ProfileLinking
 import torkve.bidichan.core.ProfileStore
 import torkve.bidichan.core.Secrets
 import torkve.bidichan.tunnel.GoShell
@@ -77,6 +78,15 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun psk(profile: Profile): String = secrets[profile.pskAccount].orEmpty()
+
+    /** Saves a profile that arrived as a link, along with its key if it had one. */
+    fun importProfile(incoming: ProfileLinking.Incoming) = onIo {
+        store.upsert(incoming.profile)
+        incoming.psk?.takeIf { it.isNotEmpty() }?.let {
+            secrets[incoming.profile.pskAccount] = it
+        }
+        _profiles.value = store.profiles
+    }
 
     fun setPsk(profile: Profile, hex: String) {
         secrets[profile.pskAccount] = hex.trim()

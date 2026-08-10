@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
+import torkve.bidichan.core.ProfileLinking
 import torkve.bidichan.tunnel.TunnelService
 import torkve.bidichan.ui.AppScreens
 
@@ -31,8 +32,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** A profile that arrived as a link; nothing is saved until it is accepted. */
+    private var incoming by mutableStateOf<ProfileLinking.Incoming?>(null)
+    private var linkError by mutableStateOf<String?>(null)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeLink(intent)
+    }
+
+    /** Decodes a profile link, if the intent carries one. */
+    private fun consumeLink(intent: Intent?) {
+        val raw = intent?.data?.toString() ?: return
+        if (!ProfileLinking.isProfileLink(raw)) return
+        // Clear it, or rotating the device would offer the same import again.
+        intent.data = null
+        runCatching { ProfileLinking.decode(raw) }
+            .onSuccess { incoming = it }
+            .onFailure { linkError = it.message ?: "That link could not be read." }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        consumeLink(intent)
         setContent {
             MaterialTheme {
                 Surface {
@@ -41,6 +64,14 @@ class MainActivity : ComponentActivity() {
                         model = model,
                         onConnect = { profileId -> requestConsentThenStart(profileId) },
                         onDisconnect = { TunnelService.stop(this) },
+                        incoming = incoming,
+                        onImport = { accepted ->
+                            model.importProfile(accepted)
+                            incoming = null
+                        },
+                        onDismissImport = { incoming = null },
+                        linkError = linkError,
+                        onDismissLinkError = { linkError = null },
                     )
                 }
             }

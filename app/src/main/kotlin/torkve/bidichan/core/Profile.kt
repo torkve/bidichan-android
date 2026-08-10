@@ -111,6 +111,24 @@ data class ChannelConfig(
                 HTTP -> 3128
                 FORWARD_LOCAL, FORWARD_REMOTE -> 8080
             }
+
+        /**
+         * The name this kind travels under in a shared link and in the control
+         * protocol. It matches what the iOS client uses, so a link written by
+         * either is understood by the other.
+         */
+        val wireName: String
+            get() = when (this) {
+                SOCKS5 -> "socks5"
+                HTTP -> "http"
+                FORWARD_LOCAL -> "forwardLocal"
+                FORWARD_REMOTE -> "forwardRemote"
+            }
+
+        companion object {
+            fun fromWire(name: String): Kind =
+                entries.firstOrNull { it.wireName == name } ?: HTTP
+        }
     }
 
     val host: String get() = if (allInterfaces) "0.0.0.0" else "127.0.0.1"

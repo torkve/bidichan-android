@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -41,6 +42,7 @@ import torkve.bidichan.AppModel
 import torkve.bidichan.core.ChannelConfig
 import torkve.bidichan.core.ChannelSnapshot
 import torkve.bidichan.core.Profile
+import torkve.bidichan.core.ProfileLinking
 
 /** Where the user is. Small enough to keep explicit rather than pull in a router. */
 private sealed interface Screen {
@@ -51,6 +53,7 @@ private sealed interface Screen {
     data object AddChannel : Screen
     data object Shell : Screen
     data object Logs : Screen
+    data class Share(val profile: Profile) : Screen
 }
 
 @Composable
@@ -58,7 +61,29 @@ fun AppScreens(
     model: AppModel,
     onConnect: (String) -> Unit,
     onDisconnect: () -> Unit,
+    incoming: ProfileLinking.Incoming? = null,
+    onImport: (ProfileLinking.Incoming) -> Unit = {},
+    onDismissImport: () -> Unit = {},
+    linkError: String? = null,
+    onDismissLinkError: () -> Unit = {},
 ) {
+    // An arriving link takes precedence: it is a decision waiting on the user.
+    if (incoming != null) {
+        ImportProfileScreen(
+            incoming = incoming,
+            onAdd = { onImport(incoming) },
+            onCancel = onDismissImport,
+        )
+        return
+    }
+    if (linkError != null) {
+        AlertDialog(
+            onDismissRequest = onDismissLinkError,
+            confirmButton = { TextButton(onClick = onDismissLinkError) { Text("OK") } },
+            title = { Text("That link could not be read") },
+            text = { Text(linkError) },
+        )
+    }
     var screen by remember { mutableStateOf<Screen>(Screen.List) }
     val profiles by model.profiles.collectAsState()
     val activeId by model.activeProfileId.collectAsState()
@@ -79,6 +104,7 @@ fun AppScreens(
             onEdit = { screen = Screen.Edit(it) },
             onAdd = { screen = Screen.Edit(Profile()) },
             onLogs = { screen = Screen.Logs },
+            onShare = { screen = Screen.Share(it) },
         )
 
         is Screen.Edit -> ProfileEditScreen(
@@ -121,6 +147,12 @@ fun AppScreens(
         )
 
         is Screen.Logs -> LogScreen(model = model, onBack = { screen = Screen.List })
+
+        is Screen.Share -> ShareProfileScreen(
+            model = model,
+            profile = s.profile,
+            onBack = { screen = Screen.List },
+        )
     }
 }
 
@@ -133,6 +165,7 @@ private fun ProfileListScreen(
     onEdit: (Profile) -> Unit,
     onAdd: () -> Unit,
     onLogs: () -> Unit,
+    onShare: (Profile) -> Unit,
 ) {
     val profiles by model.profiles.collectAsState()
     val status by model.status.collectAsState()
@@ -177,6 +210,7 @@ private fun ProfileListScreen(
                         onEdit = { onEdit(profile) },
                         onOpen = { onOpen(profile) },
                         onConnect = { onConnect(profile.id) },
+                        onShare = { onShare(profile) },
                         onDelete = { model.delete(profile) },
                     )
                 }
@@ -192,6 +226,7 @@ private fun ProfileRow(
     onEdit: () -> Unit,
     onOpen: () -> Unit,
     onConnect: () -> Unit,
+    onShare: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
@@ -221,6 +256,7 @@ private fun ProfileRow(
                         Text("Connect")
                     }
                 }
+                TextButton(onClick = onShare) { Text("Share") }
             }
         }
     }
