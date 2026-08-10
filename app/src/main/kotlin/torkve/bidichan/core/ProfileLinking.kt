@@ -40,7 +40,6 @@ object ProfileLinking {
         link.hostname = profile.hostname
         link.path = profile.path
         link.noTlsBinding = profile.noTlsBinding
-        link.fingerprint = profile.fingerprint
         link.caCertPem = profile.caCertPem
         link.enableTun = profile.enableTun
         link.tunCidr = profile.tunCidr
@@ -68,7 +67,10 @@ object ProfileLinking {
             hostname = link.hostname,
             path = link.path,
             noTlsBinding = link.noTlsBinding,
-            fingerprint = link.fingerprint.ifEmpty { "android" },
+            // The TLS fingerprint is deliberately not carried by a link: it
+            // describes the device presenting it, not the profile, and a link
+            // written on iOS would otherwise have this phone announce itself as
+            // an iPhone. Profile starts it at the platform default.
             caCertPem = link.caCertPem,
             enableTun = link.enableTun,
             tunCidr = link.tunCidr.ifEmpty { "10.42.0.2/24" },
@@ -85,13 +87,19 @@ object ProfileLinking {
     /**
      * The channel as it travels. The core validates these same field names, so
      * this has to match what it expects — and what the iOS client sends.
+     *
+     * Every field has a default, including [kind] and [port]: an absent key
+     * would otherwise throw, and [decodeChannels] would then import a profile
+     * with no channels at all. The core emits every key, so this only matters
+     * for a link from a future version — which is exactly when losing the
+     * user's channels would be least explicable.
      */
     @Serializable
     private data class WireChannel(
         val label: String = "",
-        val kind: String,
+        val kind: String = "",
         val allInterfaces: Boolean = false,
-        val port: Int,
+        val port: Int = 0,
         val target: String = "",
         val routeSystem: Boolean = false,
     )
@@ -116,10 +124,16 @@ object ProfileLinking {
         if (raw.isEmpty()) return emptyList()
         val wire = runCatching { json.decodeFromString<List<WireChannel>>(raw) }.getOrNull()
             ?: return emptyList()
-        return wire.map { w ->
+        // A kind this version does not know is left out rather than defaulted:
+        // the core refuses the kinds it knows to be wrong, so anything unknown
+        // here comes from a newer version, and guessing would open a listener
+        // the sender did not describe.
+        return wire.mapNotNull { w ->
+            val kind = ChannelConfig.Kind.entries.firstOrNull { it.wireName == w.kind }
+                ?: return@mapNotNull null
             ChannelConfig(
                 label = w.label,
-                kind = ChannelConfig.Kind.fromWire(w.kind),
+                kind = kind,
                 allInterfaces = w.allInterfaces,
                 port = w.port,
                 target = w.target,

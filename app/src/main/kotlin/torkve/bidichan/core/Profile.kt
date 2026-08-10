@@ -53,6 +53,27 @@ data class Profile(
     val channels: List<ChannelConfig> = emptyList(),
 ) {
     val pskAccount: String get() = "psk-$id"
+
+    /**
+     * The profile with its numeric fields brought back inside usable ranges.
+     *
+     * The editor takes these as free text, so nothing stops a typo from saving
+     * a reconnect window of 7200 seconds — a profile that connects, but that
+     * the shared link format then refuses, leaving it unshareable for a reason
+     * the editor never mentioned. These ranges are the ones the iOS steppers
+     * offer, and they sit inside what a link accepts.
+     */
+    fun withUsableNumbers(): Profile = copy(
+        tunMtu = tunMtu.coerceIn(MTU_RANGE),
+        memoryLimitMb = memoryLimitMb.coerceIn(MEMORY_MB_RANGE),
+        resumeGraceSeconds = resumeGraceSeconds.coerceIn(RESUME_GRACE_RANGE),
+    )
+
+    companion object {
+        val MTU_RANGE = 1000..1500
+        val MEMORY_MB_RANGE = 20..80
+        val RESUME_GRACE_RANGE = 15..600
+    }
 }
 
 /**

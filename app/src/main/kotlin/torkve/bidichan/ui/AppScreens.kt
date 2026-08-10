@@ -325,8 +325,13 @@ private fun ProfileEditScreen(model: AppModel, initial: Profile, onDone: () -> U
                 },
                 actions = {
                     TextButton(onClick = {
-                        model.upsert(p)
-                        if (psk.isNotBlank()) model.setPsk(p, psk)
+                        // Clamped on save rather than while typing: bounding
+                        // each keystroke would put "1400" out of reach, since
+                        // "1" would already have become the floor.
+                        val saved = p.withUsableNumbers()
+                        p = saved
+                        model.upsert(saved)
+                        if (psk.isNotBlank()) model.setPsk(saved, psk)
                         onDone()
                     }) { Text("Save") }
                 },
@@ -351,12 +356,15 @@ private fun ProfileEditScreen(model: AppModel, initial: Profile, onDone: () -> U
                         Field("Address (IPv6 CIDR, empty to disable)", p.tunCidr6) {
                             p = p.copy(tunCidr6 = it)
                         }
-                        Field("MTU", p.tunMtu.toString()) {
+                        Field(range("MTU", Profile.MTU_RANGE), p.tunMtu.toString()) {
                             p = p.copy(tunMtu = it.toIntOrNull() ?: p.tunMtu)
                         }
                         Toggle("Route all traffic", p.fullTunnel) { p = p.copy(fullTunnel = it) }
                     }
-                    Field("Reconnect window (seconds)", p.resumeGraceSeconds.toString()) {
+                    Field(
+                        range("Reconnect window (seconds)", Profile.RESUME_GRACE_RANGE),
+                        p.resumeGraceSeconds.toString(),
+                    ) {
                         p = p.copy(resumeGraceSeconds = it.toIntOrNull() ?: p.resumeGraceSeconds)
                     }
                     Text(
@@ -453,6 +461,13 @@ private fun Field(label: String, value: String, onChange: (String) -> Unit) {
         modifier = Modifier.fillMaxWidth(),
     )
 }
+
+/**
+ * A field label that states the range the value is clamped to on save, so the
+ * clamp is something the user was told about rather than something that happens
+ * to them. Built from the range itself, so the two cannot drift.
+ */
+private fun range(label: String, r: IntRange) = "$label (${r.first}–${r.last})"
 
 @Composable
 private fun Toggle(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
