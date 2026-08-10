@@ -8,11 +8,14 @@ plugins {
 
 android {
     namespace = "torkve.bidichan"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "torkve.bidichan"
         minSdk = 26
+        // Compile against the newest APIs the dependencies require, but stay a
+        // release behind on targetSdk: that opts into new runtime behaviour,
+        // and none of it has been exercised on a device yet.
         targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
         versionName = "1.0.0"
