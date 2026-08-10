@@ -107,7 +107,9 @@ class GoBridge {
         cfg.memoryLimitMB = memoryLimitMb.toLong()
         cfg.resumeGraceSeconds = resumeGraceSeconds.toLong()
 
-        val p = SocketProtector { fd -> protect(fd) }
+        // The binding maps Go's int to a Java long, so the descriptor arrives
+        // wider than the platform call takes.
+        val p = SocketProtector { fd -> protect(fd.toInt()) }
         protector = p
         client.start(cfg, tunFd.toLong(), p)
     }
