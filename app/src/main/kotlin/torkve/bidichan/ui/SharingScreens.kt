@@ -5,7 +5,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -44,12 +43,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.FileProvider
 import torkve.bidichan.AppModel
 import torkve.bidichan.core.Profile
 import torkve.bidichan.core.ProfileLinking
-import java.io.File
-import java.io.FileOutputStream
+import java.io.ByteArrayOutputStream
 
 /**
  * Hands a profile to another device as a link. The one real decision is whether
@@ -339,7 +336,7 @@ private fun Detail(label: String, value: String) {
  * often the only part the receiving side can act on directly.
  */
 private fun shareProfile(context: Context, link: String, code: ImageBitmap?) {
-    val uri = code?.let { writeSharedCode(context, it) }
+    val uri = code?.let { pngBytes(it) }?.let { SharedCodeProvider.offer(context, it) }
     val intent = Intent(Intent.ACTION_SEND).apply {
         if (uri == null) {
             type = "text/plain"
@@ -356,22 +353,10 @@ private fun shareProfile(context: Context, link: String, code: ImageBitmap?) {
     context.startActivity(Intent.createChooser(intent, "Share profile"))
 }
 
-/**
- * Writes the code where the FileProvider can serve it, returning the URI to
- * hand out, or null if it could not be written.
- *
- * Always the same file, deliberately. The link may carry the pre-shared key, so
- * this image can be a credential; keeping one copy that each share overwrites
- * means the app is not accumulating them. It lives in the cache directory,
- * which is private to the app, is not backed up, and the system may clear it at
- * any time — none of which makes it a place to keep a secret, only a reasonable
- * place to put one for as long as a share takes.
- */
-private fun writeSharedCode(context: Context, code: ImageBitmap): Uri? = runCatching {
-    val dir = File(context.cacheDir, "codes").apply { mkdirs() }
-    val file = File(dir, "profile-code.png")
-    FileOutputStream(file).use { out ->
+/** The code as PNG bytes, or null if it could not be encoded. */
+private fun pngBytes(code: ImageBitmap): ByteArray? = runCatching {
+    ByteArrayOutputStream().use { out ->
         code.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, out)
+        out.toByteArray()
     }
-    FileProvider.getUriForFile(context, "${context.packageName}.shared", file)
 }.getOrNull()
