@@ -1,13 +1,18 @@
 # Setup
 
-One-time steps to make CI produce a signed, installable APK on its own. Nothing
-here needs a Mac, and nothing needs an Android toolchain on your machine.
+What CI needs to produce a **release-signed** APK instead of a debug-signed one.
+Four secrets, one keystore, about five minutes. Nothing here needs a Mac or an
+Android toolchain.
 
-## 1. Create a signing keystore
+Until they are set the build still succeeds — it signs with the debug key and
+prints a warning on the run. That is fine for testing and must never be
+published.
 
-Android will only install an APK that is signed, and an app can only be upgraded
-in place by a build signed with the *same* key. Generate one and keep it safe —
-losing it means every user has to uninstall and reinstall.
+## 1. Create the signing key
+
+Android installs only signed APKs, and an installed app can be upgraded in place
+only by a build signed with the **same** key. Generate it once and keep it
+safe: lose it and every user has to uninstall and reinstall to move on.
 
 ```sh
 keytool -genkeypair -v \
@@ -17,40 +22,86 @@ keytool -genkeypair -v \
     -storetype pkcs12
 ```
 
-Then base64 it for the secret:
+`keytool` ships with any JDK. It asks for a keystore password and a few name
+fields; the name fields are cosmetic and never shown to users. With `-storetype
+pkcs12` the key password is the same as the keystore password — answer the key
+password prompt with the same value, or press return to accept it.
+
+Keep `release.jks` somewhere durable and out of the repository — it is already
+covered by `.gitignore`, but a password manager or an encrypted backup is the
+right home for it.
+
+## 2. Set the four secrets
+
+The workflow reads exactly these names:
+
+| Secret | Value |
+| --- | --- |
+| `KEYSTORE_BASE64` | the keystore file, base64 with no line breaks |
+| `KEYSTORE_PASSWORD` | the keystore password from step 1 |
+| `KEY_ALIAS` | `bidichan`, unless you chose another `-alias` |
+| `KEY_PASSWORD` | the key password (same as the keystore password with `pkcs12`) |
+
+### With the `gh` CLI
+
+From the directory holding `release.jks`, in the repository checkout:
 
 ```sh
-base64 -w0 release.jks
+gh secret set KEYSTORE_BASE64   --repo torkve/bidichan-android < <(base64 -w0 release.jks)
+gh secret set KEYSTORE_PASSWORD --repo torkve/bidichan-android
+gh secret set KEY_ALIAS         --repo torkve/bidichan-android --body bidichan
+gh secret set KEY_PASSWORD      --repo torkve/bidichan-android
 ```
 
-## 2. Repository secrets
+The two without `--body` prompt for the value, so it stays out of your shell
+history. Setting secrets needs a token with **Secrets: write** on the
+repository — the one used for watching CI runs does not have it.
 
-Add these under **Settings ▸ Secrets and variables ▸ Actions**:
+### Or through the web UI
 
-| Secret | What it is |
-| --- | --- |
-| `KEYSTORE_BASE64` | the base64 from step 1 |
-| `KEYSTORE_PASSWORD` | the keystore password |
-| `KEY_ALIAS` | the alias (`bidichan` above) |
-| `KEY_PASSWORD` | the key password |
+**Settings ▸ Secrets and variables ▸ Actions ▸ New repository secret**, once per
+row above. For `KEYSTORE_BASE64` paste the output of:
 
-Without them the workflow still builds, but signs with the debug key. That is
-fine for trying a branch build and must never be published.
+```sh
+base64 -w0 release.jks        # GNU/Linux
+base64 release.jks | tr -d '\n'   # macOS
+```
 
-## 3. Build
+`-w0` matters: a base64 value with line breaks decodes to a corrupt keystore and
+the build fails at signing.
+
+## 3. Check it took effect
+
+Re-run the workflow (**Actions ▸ build ▸ Run workflow**) and look at the
+**"Say how the build will be signed"** step. It prints one of:
+
+- `Release key: signing with the keystore from KEYSTORE_BASE64.` — done.
+- a warning that the APK is debug-signed — `KEYSTORE_BASE64` is unset or empty.
+
+To confirm on the artifact itself:
+
+```sh
+# from the Android SDK build-tools
+apksigner verify --print-certs app-release.apk
+```
+
+The certificate subject should be the name you entered in step 1, not
+`CN=Android Debug`.
+
+## 4. Build it
 
 - Push to `main` → the APK appears as a build artifact on the run.
 - Tag `v*` → the same APK is attached to a GitHub release.
-- Or run the workflow by hand from the Actions tab.
+- Or **Actions ▸ build ▸ Run workflow**.
 
-Download the artifact, transfer it to the device, and install it (the device has
-to allow installing from that source).
+Download it, move it to the device, and install (the device has to allow
+installing from that source).
 
-## 4. Keeping the Go core in step
+## 5. Keeping the core in step
 
 The core is a git submodule at `vendor/bidichan-src`, pinned to a commit. CI
-builds the binding from that exact commit, so a change to the core only reaches
-the app once the pin moves:
+builds the binding from that exact commit, so a change to the core reaches the
+app only once the pin moves:
 
 ```sh
 cd vendor/bidichan-src
@@ -59,13 +110,12 @@ cd ../..
 git add vendor/bidichan-src && git commit -m "bump bidichan core"
 ```
 
-## 5. First run on the device
+## 6. First run on the device
 
 The system asks the user to allow this app to handle the device's packets the
-first time a profile connects. That prompt is the platform's, not the app's, and
-consent is remembered afterwards.
+first time a profile connects. That prompt belongs to the platform, not the app,
+and the answer is remembered.
 
-A profile needs, at minimum, the server address, the hostname to present, and
-the pre-shared key — the same values the server side was configured with. The
-key is stored under a key held in the platform keystore, separately from the
-rest of the profile.
+A profile needs at least the server address, the hostname to present, and the
+pre-shared key — the same values the server was configured with. The key is held
+under a key in the platform keystore, separately from the rest of the profile.

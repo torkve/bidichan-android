@@ -21,6 +21,9 @@ jobs:
       contents: write # to attach the APK to a release
     env:
       BUILD_NUMBER: ${{ github.run_number }}
+      # Job-level so the signing step's `if:` can see it — the secrets context
+      # is not available there, and a step's own env is not either.
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,14 +67,20 @@ jobs:
           ls -la "$GITHUB_WORKSPACE/app/libs"
 
       - name: Materialise the signing keystore
-        id: signing
         if: ${{ env.KEYSTORE_BASE64 != '' }}
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Say how the build will be signed
+        run: |
+          if [ -n "${KEYSTORE_PATH:-}" ]; then
+            echo "Release key: signing with the keystore from KEYSTORE_BASE64."
+          else
+            echo "::warning::No signing secrets set — this APK is DEBUG-SIGNED."
+            echo "Installable for testing, but never publish it. See SETUP.md."
+          fi
 
       - uses: gradle/actions/setup-gradle@v4
         with:
