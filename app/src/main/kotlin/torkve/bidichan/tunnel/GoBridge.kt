@@ -135,7 +135,7 @@ class GoBridge {
 
     /** Blocks until the client stops for good; returns the reason, null if clean. */
     fun waitUntilDone(): String? = try {
-        client.wait()
+        client.awaitDone()
         null
     } catch (e: Exception) {
         e.message
