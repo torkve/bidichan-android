@@ -1,10 +1,14 @@
 package torkve.bidichan.ui
 
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -17,6 +21,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -30,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -108,6 +114,35 @@ fun ShareProfileScreen(model: AppModel, profile: Profile, onBack: () -> Unit) {
                 Button(onClick = { shareText(context, link) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Share link")
                 }
+                Text(
+                    "Most chat apps will not make this tappable, because the app registers its " +
+                        "own link scheme rather than a web address. The other device can copy " +
+                        "the text and use Import from a link, or scan the code below.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+
+                val code = remember(link) { QrCode.encode(link) }
+                if (code != null) {
+                    Image(
+                        bitmap = code,
+                        contentDescription = "Scannable code for this profile",
+                        // Nearest-neighbour, so the modules stay square edged
+                        // rather than being smoothed into each other.
+                        filterQuality = FilterQuality.None,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(1f)
+                            .background(androidx.compose.ui.graphics.Color.White)
+                            .padding(12.dp),
+                    )
+                } else {
+                    Text(
+                        "This profile is too large to show as a code — its certificate takes " +
+                            "more room than one can hold. Send the link as text instead.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
                 Text(link, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
             }
         }
@@ -168,6 +203,104 @@ fun ImportProfileScreen(
             )
         }
     }
+}
+
+/**
+ * Imports a profile from a link that arrived as plain text.
+ *
+ * Tapping a link only works where the sending app made it tappable, and most
+ * chat apps only do that for web addresses — never for an app's own scheme. So
+ * the text has to be importable by hand as well, or a profile shared over the
+ * wrong app cannot be received at all.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ImportLinkScreen(
+    onImport: (ProfileLinking.Incoming) -> Unit,
+    onBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    var text by remember { mutableStateOf("") }
+    var decoded by remember { mutableStateOf<ProfileLinking.Incoming?>(null) }
+    var failure by remember { mutableStateOf<String?>(null) }
+
+    // Once the link is read this becomes the same confirmation screen a tapped
+    // link would have reached, so there is one place that describes an
+    // arriving profile.
+    val pending = decoded
+    if (pending != null) {
+        ImportProfileScreen(
+            incoming = pending,
+            onAdd = { onImport(pending) },
+            onCancel = { decoded = null },
+        )
+        return
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Import from a link") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Cancel")
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Column(
+            Modifier.padding(padding).fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                label = { Text("Link") },
+                placeholder = { Text("bidichan://profile#…") },
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                minLines = 3,
+                maxLines = 8,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Text(
+                "Paste the link you were sent. It is not saved as a profile until you have seen " +
+                    "what is in it.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { clipboardText(context)?.let { text = it } }) {
+                    Text("Paste")
+                }
+                Button(
+                    onClick = {
+                        val raw = text.trim()
+                        if (!ProfileLinking.isProfileLink(raw)) {
+                            failure = "That does not look like a profile link. It should begin " +
+                                "with ${ProfileLinking.prefix}."
+                        } else {
+                            // The core writes its errors to be read by a person.
+                            runCatching { ProfileLinking.decode(raw) }
+                                .onSuccess { decoded = it; failure = null }
+                                .onFailure { failure = it.message ?: "That link could not be read." }
+                        }
+                    },
+                    enabled = text.isNotBlank(),
+                ) { Text("Read link") }
+            }
+
+            failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+/** The clipboard as plain text, or null when it holds nothing usable. */
+private fun clipboardText(context: Context): String? {
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return null
+    val item = cm.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0) ?: return null
+    return item.coerceToText(context).toString().trim().ifEmpty { null }
 }
 
 @Composable

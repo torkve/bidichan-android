@@ -86,4 +86,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.security.crypto)
     implementation(libs.kotlinx.serialization.json)
+
+    // Renders a profile as a scannable code. Pure Java, encoder only — see
+    // ui/QrCode.kt for why this is not shared with the iOS client the way the
+    // link format is.
+    implementation(libs.zxing.core)
 }

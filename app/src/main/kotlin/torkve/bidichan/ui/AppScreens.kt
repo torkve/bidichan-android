@@ -54,6 +54,7 @@ private sealed interface Screen {
     data object Shell : Screen
     data object Logs : Screen
     data class Share(val profile: Profile) : Screen
+    data object ImportLink : Screen
 }
 
 @Composable
@@ -103,6 +104,7 @@ fun AppScreens(
             onOpen = { screen = Screen.Connection(it) },
             onEdit = { screen = Screen.Edit(it) },
             onAdd = { screen = Screen.Edit(Profile()) },
+            onImportLink = { screen = Screen.ImportLink },
             onLogs = { screen = Screen.Logs },
             onShare = { screen = Screen.Share(it) },
         )
@@ -153,6 +155,14 @@ fun AppScreens(
             profile = s.profile,
             onBack = { screen = Screen.List },
         )
+
+        is Screen.ImportLink -> ImportLinkScreen(
+            onImport = { accepted ->
+                onImport(accepted)
+                screen = Screen.List
+            },
+            onBack = { screen = Screen.List },
+        )
     }
 }
 
@@ -164,6 +174,7 @@ private fun ProfileListScreen(
     onOpen: (Profile) -> Unit,
     onEdit: (Profile) -> Unit,
     onAdd: () -> Unit,
+    onImportLink: () -> Unit,
     onLogs: () -> Unit,
     onShare: (Profile) -> Unit,
 ) {
@@ -176,7 +187,14 @@ private fun ProfileListScreen(
         topBar = {
             TopAppBar(
                 title = { Text("bidichan") },
-                actions = { TextButton(onClick = onLogs) { Text("Logs") } },
+                actions = {
+                    // Importing a link is rare enough not to earn a permanent
+                    // control, but it has to be reachable: a link sent over a
+                    // chat app is usually not tappable, so pasting it is the
+                    // only way in.
+                    TextButton(onClick = onImportLink) { Text("Import") }
+                    TextButton(onClick = onLogs) { Text("Logs") }
+                },
             )
         },
         floatingActionButton = {
