@@ -38,9 +38,13 @@ object QrCode {
             // screen and scanned from a few centimetres away is not the case
             // error correction is there for.
             EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L,
-            // The quiet zone is part of the standard; without it many scanners
-            // will not see the code at all.
-            EncodeHintType.MARGIN to 2,
+            // The quiet zone is part of the standard, and baking it into the
+            // image rather than leaving it to a view matters more than it
+            // looks: this same bitmap is what gets shared, so it has to be
+            // scannable standing alone in someone else's chat app. Four
+            // modules is what the standard asks for, and what the iOS client
+            // uses, so a code looks the same whichever device made it.
+            EncodeHintType.MARGIN to 4,
             EncodeHintType.CHARACTER_SET to "UTF-8",
         )
         val matrix = runCatching {

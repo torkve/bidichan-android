@@ -35,6 +35,22 @@
             </intent-filter>
         </activity>
 
+        <!-- Hands the scannable code to whichever app the user shares it with.
+             An image can only cross an app boundary as a content URI, and the
+             receiver is granted read access to that one URI for the life of the
+             share. `exported="false"` with `grantUriPermissions` is what keeps
+             it to that: no other app can reach the provider uninvited. See
+             res/xml/shared_files.xml for the only directory it can serve. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.shared"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/shared_files" />
+        </provider>
+
         <!-- The tunnel host. BIND_VPN_SERVICE is the fixed platform permission
              name for a service that provides the system's packet interface. -->
         <service

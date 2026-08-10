@@ -1,10 +1,12 @@
 package torkve.bidichan.ui
 
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,13 +38,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import torkve.bidichan.AppModel
 import torkve.bidichan.core.Profile
 import torkve.bidichan.core.ProfileLinking
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Hands a profile to another device as a link. The one real decision is whether
@@ -111,29 +118,40 @@ fun ShareProfileScreen(model: AppModel, profile: Profile, onBack: () -> Unit) {
             failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
             if (link.isNotEmpty()) {
-                Button(onClick = { shareText(context, link) }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Share link")
+                // Encoded once per link, not on every recomposition.
+                val code = remember(link) { QrCode.encode(link) }
+
+                Button(
+                    onClick = { shareProfile(context, link, code) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (code == null) "Share link" else "Share code and link")
                 }
                 Text(
-                    "Most chat apps will not make this tappable, because the app registers its " +
-                        "own link scheme rather than a web address. The other device can copy " +
-                        "the text and use Import from a link, or scan the code below.",
+                    if (code == null) {
+                        "Most chat apps will not make this tappable, because the app registers " +
+                            "its own link scheme rather than a web address. The other device " +
+                            "can copy the text and use Import from a link."
+                    } else {
+                        "Sends both. An app that takes images gets the code with the link " +
+                            "alongside it; one that only takes text gets the link. Most chat " +
+                            "apps will not make that text tappable — the other device can copy " +
+                            "it and use Import from a link, or just scan the code."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                 )
 
-                val code = remember(link) { QrCode.encode(link) }
                 if (code != null) {
+                    // The bitmap carries its own white field and quiet zone, so
+                    // it stays scannable wherever it ends up — including in
+                    // someone else's chat app.
                     Image(
                         bitmap = code,
                         contentDescription = "Scannable code for this profile",
                         // Nearest-neighbour, so the modules stay square edged
                         // rather than being smoothed into each other.
                         filterQuality = FilterQuality.None,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f)
-                            .background(androidx.compose.ui.graphics.Color.White)
-                            .padding(12.dp),
+                        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
                     )
                 } else {
                     Text(
@@ -311,10 +329,49 @@ private fun Detail(label: String, value: String) {
     }
 }
 
-private fun shareText(context: Context, text: String) {
+/**
+ * Sends the profile: the scannable code where one could be made, and the link
+ * as text either way.
+ *
+ * An app that takes images gets both — Telegram attaches the code and uses the
+ * link as its caption — and one that only takes text still gets the link. That
+ * matters because a link is not tappable in most chat apps, so the code is
+ * often the only part the receiving side can act on directly.
+ */
+private fun shareProfile(context: Context, link: String, code: ImageBitmap?) {
+    val uri = code?.let { writeSharedCode(context, it) }
     val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, text)
+        if (uri == null) {
+            type = "text/plain"
+        } else {
+            type = "image/png"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            // Some targets read the grant from the clip data rather than the
+            // extra, so set both and flag the intent.
+            clipData = ClipData.newUri(context.contentResolver, "Profile code", uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        putExtra(Intent.EXTRA_TEXT, link)
     }
     context.startActivity(Intent.createChooser(intent, "Share profile"))
 }
+
+/**
+ * Writes the code where the FileProvider can serve it, returning the URI to
+ * hand out, or null if it could not be written.
+ *
+ * Always the same file, deliberately. The link may carry the pre-shared key, so
+ * this image can be a credential; keeping one copy that each share overwrites
+ * means the app is not accumulating them. It lives in the cache directory,
+ * which is private to the app, is not backed up, and the system may clear it at
+ * any time — none of which makes it a place to keep a secret, only a reasonable
+ * place to put one for as long as a share takes.
+ */
+private fun writeSharedCode(context: Context, code: ImageBitmap): Uri? = runCatching {
+    val dir = File(context.cacheDir, "codes").apply { mkdirs() }
+    val file = File(dir, "profile-code.png")
+    FileOutputStream(file).use { out ->
+        code.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, out)
+    }
+    FileProvider.getUriForFile(context, "${context.packageName}.shared", file)
+}.getOrNull()

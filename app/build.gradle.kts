@@ -82,6 +82,10 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     implementation(libs.androidx.activity.compose)
+    // FileProvider, for handing the scannable code to another app. It arrives
+    // transitively anyway; naming it means a dependency bump elsewhere cannot
+    // quietly take it away.
+    implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.security.crypto)
