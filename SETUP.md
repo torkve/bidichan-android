@@ -44,6 +44,10 @@ The workflow reads exactly these names:
 
 ### With the `gh` CLI
 
+Needs [`gh`](https://cli.github.com) on `PATH` and authenticated (`gh auth login`,
+or `GH_TOKEN` set) with a token that has **Secrets: write** on the repository —
+a token that can only watch CI runs will get a 403 on the secrets endpoint.
+
 From the directory holding `release.jks`, in the repository checkout:
 
 ```sh
