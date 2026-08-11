@@ -24,8 +24,17 @@ fun resolveServerAddress(context: Context, addr: String): String {
     val (host, port) = splitHostPort(addr) ?: return addr
     if (isIpLiteral(host)) return addr
 
-    val cm = context.getSystemService(ConnectivityManager::class.java) ?: return addr
-    val network = cm.activeNetwork ?: return addr
+    // Every failure here falls back to the address as written, because that is
+    // all this function promises: resolving early is an improvement on letting
+    // the lookup happen later, never a precondition for connecting. Asking
+    // which network is active needs ACCESS_NETWORK_STATE, and a missing
+    // permission arrives as an exception — which must not be the thing that
+    // stops the tunnel from being built.
+    val network = runCatching {
+        context.getSystemService(ConnectivityManager::class.java)?.activeNetwork
+    }.onFailure {
+        Log.w(TAG, "cannot see the underlying network (${it.message}); using $host as given")
+    }.getOrNull() ?: return addr
     val resolved = runCatching { network.getAllByName(host) }.getOrNull()
     val first = resolved?.firstOrNull() ?: run {
         Log.w(TAG, "could not resolve $host on the underlying network; using it as given")
@@ -51,8 +60,14 @@ fun splitHostPort(addr: String): Pair<String, String>? {
     return addr.substring(0, idx) to addr.substring(idx + 1)
 }
 
-/** True when the host part is already an address rather than a name. */
-private fun isIpLiteral(host: String): Boolean {
+/**
+ * True when the host part is already an address rather than a name.
+ *
+ * internal rather than private so the unit tests can reach it: this is the
+ * branch that decides whether the platform resolver is consulted at all, and
+ * testing only with a literal address hides everything behind it.
+ */
+internal fun isIpLiteral(host: String): Boolean {
     if (host.contains(":")) return true // any IPv6 literal
     val octets = host.split(".")
     return octets.size == 4 && octets.all { part ->

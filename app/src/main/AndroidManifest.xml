@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Asking the platform which network is underneath us, so the server's
+         name is resolved there rather than through the tunnel being built (see
+         Resolve.kt), and so a network change can be noticed while connected.
+         An install-time permission: nothing is prompted for at runtime. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The tunnel keeps running while the screen is off; the system requires
