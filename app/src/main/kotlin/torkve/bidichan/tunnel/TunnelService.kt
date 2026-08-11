@@ -28,7 +28,6 @@ import torkve.bidichan.core.Profile
 import torkve.bidichan.core.ProfileStore
 import torkve.bidichan.core.Secrets
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Hosts the embedded core and owns the system packet interface.
@@ -45,7 +44,7 @@ class TunnelService : VpnService() {
     private val io = Executors.newCachedThreadPool()
     private var bridge: GoBridge? = null
     private var profile: Profile? = null
-    private val running = AtomicBoolean(false)
+    private val status = TunnelStatus { state = it }
     private var restoring = false
 
     /** Channel opens issued so far, so a rebuilt session can be restored. */
@@ -73,11 +72,11 @@ class TunnelService : VpnService() {
             AppLog.log("start without a profile; ignoring")
             return START_NOT_STICKY
         }
-        if (!running.compareAndSet(false, true)) {
+        if (!status.start()) {
             AppLog.log("already running")
             return START_STICKY
         }
-        startForeground(NOTIFICATION_ID, notification("Connecting…"))
+        startForeground(NOTIFICATION_ID, notification(status.value))
         io.execute {
             // Bring-up runs on a worker, where an exception nobody catches
             // takes the whole app down rather than failing the connection.
@@ -138,6 +137,13 @@ class TunnelService : VpnService() {
             )
         } catch (e: Exception) {
             fail("could not connect: ${e.message}")
+            return
+        }
+
+        // Disconnect may have arrived while start() was blocked. Do not open
+        // channels or publish Connected after shutdown has already won.
+        if (!status.isRunning) {
+            b.stop()
             return
         }
 
@@ -286,6 +292,7 @@ class TunnelService : VpnService() {
     }
 
     private fun onLinkState(state: GoBridge.LinkState) {
+        if (!status.isRunning) return
         when (state) {
             GoBridge.LinkState.UP -> {
                 AppLog.log("link up")
@@ -307,10 +314,11 @@ class TunnelService : VpnService() {
     }
 
     private fun onSessionUp(reestablished: Boolean) {
-        if (!reestablished) return
+        if (!reestablished || !status.isRunning) return
         val b = bridge ?: return
         val p = profile ?: return
         io.execute {
+            if (!status.isRunning) return@execute
             AppLog.log("session reestablished: restoring channels")
             restoreTunChannel(b, p)
             replayChannels(b)
@@ -380,13 +388,24 @@ class TunnelService : VpnService() {
     // MARK: - Teardown
 
     private fun fail(message: String) {
+        // A deliberate Disconnect closes a blocking start and may make it
+        // return an error. Shutdown has already won in that case, so do not
+        // turn the user's action into a spurious connection failure.
+        if (!status.isRunning) return
         AppLog.log("start failed: $message")
         lastError = message
         shutdown()
     }
 
     private fun shutdown() {
-        if (!running.compareAndSet(true, false)) return
+        // Publish Disconnected first and close the state gate. Link callbacks
+        // already queued by the Go core can no longer overwrite it.
+        val wasRunning = status.stop()
+        if (!wasRunning) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         networkCallback?.let { cb ->
             runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb) }
         }
@@ -446,7 +465,7 @@ class TunnelService : VpnService() {
     }
 
     private fun updateNotification(text: String) {
-        state = text
+        if (!status.update(text)) return
         runCatching {
             getSystemService(NotificationManager::class.java)
                 ?.notify(NOTIFICATION_ID, notification(text))
@@ -501,7 +520,7 @@ class TunnelService : VpnService() {
         @Volatile
         private var instance: TunnelService? = null
 
-        val isRunning: Boolean get() = instance != null
+        val isRunning: Boolean get() = instance?.status?.isRunning == true
 
         /** Blocks on the core; call from a background thread. */
         fun control(json: String): String =
