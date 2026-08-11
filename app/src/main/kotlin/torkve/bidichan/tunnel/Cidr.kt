@@ -3,6 +3,9 @@ package torkve.bidichan.tunnel
 import java.net.Inet6Address
 import java.net.InetAddress
 
+/** Everything a numeric IPv4 or IPv6 address can be spelled with. */
+private const val NUMERIC_ADDRESS_CHARS = "0123456789abcdefABCDEF.:"
+
 /** Splits "10.42.0.2/24" into its address and prefix length, or null. */
 fun cidrParts(cidr: String): Pair<String, Int>? {
     val parts = cidr.split("/")
@@ -26,8 +29,13 @@ fun cidrParts(cidr: String): Pair<String, Int>? {
  * than an Int is what makes one implementation cover both.
  */
 fun networkBase(address: String, prefix: Int): String? {
-    // Numeric input only: it always arrives from cidrParts, so this never
-    // performs a lookup. Anything unparseable is a profile we cannot route.
+    // Numeric literals only. getByName answers an empty string with the
+    // loopback address — which would become a route to 127.0.0.0, rejected by
+    // addRoute exactly as an unmasked one is — and it looks up anything else
+    // that is not a literal, so a malformed profile would put a DNS query on
+    // the connect path. Neither is worth allowing for input that should only
+    // ever be an address.
+    if (address.isEmpty() || address.any { it !in NUMERIC_ADDRESS_CHARS }) return null
     val bytes = runCatching { InetAddress.getByName(address) }.getOrNull()?.address ?: return null
     if (prefix < 0 || prefix > bytes.size * 8) return null
     for (i in bytes.indices) {

@@ -69,10 +69,23 @@ class CidrTest {
     @Test
     fun `refuses what it cannot work out`() {
         assertNull(networkBase("not-an-address", 24))
-        assertNull(networkBase("", 24))
         assertNull(networkBase("10.42.0.2", 33))
         assertNull(networkBase("fd00:bd::2", 129))
         assertNull(networkBase("10.42.0.2", -1))
+    }
+
+    /**
+     * An empty address is refused rather than resolved.
+     *
+     * `InetAddress.getByName("")` answers with the loopback address, so a
+     * profile whose address field is blank — "/24" — would otherwise have
+     * produced a route to 127.0.0.0, which addRoute rejects exactly as it
+     * rejects an unmasked one. The same crash by another road.
+     */
+    @Test
+    fun `refuses a blank address rather than calling it loopback`() {
+        assertNull(networkBase("", 24))
+        assertNull(networkBase(" ", 24))
     }
 
     @Test
