@@ -15,7 +15,12 @@ import kotlinx.serialization.json.put
  * `{"action":"...","args":{...}}` — so the two stay in step by construction.
  */
 object Control {
-    private val json = Json { encodeDefaults = false; explicitNulls = false }
+    // encodeDefaults, or a field the caller never sets is simply not sent: the
+    // core read the missing "tun_side" as "" and refused to open the packet
+    // channel, leaving a tunnel that called itself connected and carried
+    // nothing. explicitNulls stays off so the genuinely optional fields —
+    // label, name, cidr6 — are still omitted rather than sent as null.
+    private val json = Json { encodeDefaults = true; explicitNulls = false }
 
     private fun request(action: String, args: JsonElement? = null): String =
         json.encodeToString(
