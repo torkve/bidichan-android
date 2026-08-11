@@ -18,7 +18,7 @@ android {
         // and none of it has been exercised on a device yet.
         targetSdk = 36
         versionCode = (System.getenv("BUILD_NUMBER") ?: "1").toInt()
-        versionName = "2.0.0"
+        versionName = "2.0.1"
     }
 
     // CI writes a keystore and exports these; without them a release build is
