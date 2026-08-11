@@ -90,7 +90,11 @@ jobs:
         # Before assembling, so a broken build does not produce an APK. Only
         # the JVM tests run here — anything needing a device cannot run on this
         # runner, which is why what is testable this way is kept that way.
-        run: gradle --no-daemon testReleaseUnitTest
+        #
+        # testDebugUnitTest, not testReleaseUnitTest: AGP 9 registers a unit
+        # test component for the debug variant only, and naming a task that
+        # does not exist fails the build rather than quietly running nothing.
+        run: gradle --no-daemon testDebugUnitTest
 
       - name: Assemble the release APK
         env:
