@@ -6,6 +6,7 @@ activityCompose = "1.13.0"
 lifecycle = "2.11.0"
 securityCrypto = "1.1.0"
 kotlinxSerialization = "1.9.0"
+junit = "4.13.2"
 # Encoder only — the app never scans a code, so the barcode-reading half of
 # ZXing is not pulled in.
 zxing = "3.5.3"
@@ -21,6 +22,7 @@ compose-material-icons = { module = "androidx.compose.material:material-icons-ex
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
 compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview" }
+junit = { module = "junit:junit", version.ref = "junit" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 

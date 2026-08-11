@@ -86,6 +86,12 @@ jobs:
         with:
           gradle-version: "9.7.0"
 
+      - name: Run the unit tests
+        # Before assembling, so a broken build does not produce an APK. Only
+        # the JVM tests run here — anything needing a device cannot run on this
+        # runner, which is why what is testable this way is kept that way.
+        run: gradle --no-daemon testReleaseUnitTest
+
       - name: Assemble the release APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}

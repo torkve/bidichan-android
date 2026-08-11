@@ -66,6 +66,7 @@ android {
     }
 
     sourceSets["main"].java.srcDirs("src/main/kotlin")
+    sourceSets["test"].java.srcDirs("src/test/kotlin")
 }
 
 
@@ -91,4 +92,9 @@ dependencies {
     // ui/QrCode.kt for why this is not shared with the iOS client the way the
     // link format is.
     implementation(libs.zxing.core)
+
+    // Cidr.kt is arithmetic over java.net types with nothing from the platform
+    // in it, so it runs on the JVM — the one part of tunnel bring-up that can
+    // be checked without a device.
+    testImplementation(libs.junit)
 }

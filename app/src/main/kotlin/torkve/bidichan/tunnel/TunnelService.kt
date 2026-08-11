@@ -78,7 +78,17 @@ class TunnelService : VpnService() {
             return START_STICKY
         }
         startForeground(NOTIFICATION_ID, notification("Connecting…"))
-        io.execute { connect(profileId) }
+        io.execute {
+            // Bring-up runs on a worker, where an exception nobody catches
+            // takes the whole app down rather than failing the connection.
+            // Whatever went wrong, the user is better served by a profile that
+            // will not connect and says so than by the app disappearing.
+            try {
+                connect(profileId)
+            } catch (t: Throwable) {
+                fail("could not connect: ${t.message ?: t::class.java.simpleName}")
+            }
+        }
         return START_STICKY
     }
 
@@ -170,12 +180,21 @@ class TunnelService : VpnService() {
                 builder.addDnsServer("2606:4700:4700::1111").addDnsServer("2001:4860:4860::8888")
             }
         } else {
-            // Only the tunnel's own subnet goes through it.
-            cidrParts(p.tunCidr)?.let { (addr, prefix) ->
-                builder.addRoute(networkBase(addr, prefix), prefix)
-            }
-            if (p.tunCidr6.isNotEmpty()) {
-                cidrParts(p.tunCidr6)?.let { (addr, prefix) -> builder.addRoute(addr, prefix) }
+            // Only the tunnel's own subnet goes through it. Both families are
+            // masked to their network base first: addRoute refuses an address
+            // carrying any bit below its prefix, so an interface address like
+            // fd00:bd::2/64 cannot be handed to it as it stands. A subnet we
+            // cannot make sense of is left unrouted and logged, rather than
+            // being allowed to take the connection down with it.
+            for (cidr in listOf(p.tunCidr, p.tunCidr6)) {
+                if (cidr.isEmpty()) continue
+                val parts = cidrParts(cidr)
+                val base = parts?.let { (addr, prefix) -> networkBase(addr, prefix) }
+                if (parts == null || base == null) {
+                    AppLog.log("cannot work out the subnet of $cidr; leaving it unrouted")
+                    continue
+                }
+                builder.addRoute(base, parts.second)
             }
         }
 
