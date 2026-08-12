@@ -8,10 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
+import android.os.PowerManager
 import android.util.Log
 import android.net.ProxyInfo
 import kotlinx.serialization.json.Json
@@ -54,6 +53,7 @@ class TunnelService : VpnService() {
     private val channelsLock = Any()
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -148,6 +148,8 @@ class TunnelService : VpnService() {
         }
 
         AppLog.log("peer is up")
+        // Before the channels, so nothing below races the device suspending.
+        holdCpuAwake()
         if (p.enableTun) {
             runCatching { openTunChannel(b, p) }
                 .onFailure { AppLog.log("packet channel: ${it.message}") }
@@ -270,25 +272,85 @@ class TunnelService : VpnService() {
      * socket on the old one times out, so telling the core lets it drop the
      * dead socket and redial at once.
      */
+    /**
+     * Keeps the CPU running while the tunnel is up.
+     *
+     * The core keeps the session alive with a timer, and a suspended CPU does
+     * not run timers: the keepalive stops, the peer hears nothing, and it drops
+     * the session once the grace window passes. The device then wakes to a
+     * tunnel that has to be built from scratch — which is what "it goes offline
+     * in my pocket" looks like from the outside.
+     *
+     * A partial lock leaves the screen alone; it only prevents deep sleep, and
+     * it is held exactly as long as the tunnel is.
+     */
+    private fun holdCpuAwake() {
+        if (wakeLock != null) return
+        val pm = getSystemService(PowerManager::class.java) ?: return
+        runCatching {
+            val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "bidichan:tunnel")
+            // Not reference counted: acquired once here, released once in
+            // shutdown, and release must not depend on matching counts.
+            wl.setReferenceCounted(false)
+            wl.acquire()
+            wakeLock = wl
+            AppLog.log("holding the cpu awake for the tunnel")
+        }.onFailure { AppLog.log("could not hold the cpu awake: ${it.message}") }
+    }
+
+    private fun releaseCpu() {
+        wakeLock?.let { wl -> runCatching { if (wl.isHeld) wl.release() } }
+        wakeLock = null
+    }
+
+    /**
+     * Tells the platform which network the tunnel is riding on.
+     *
+     * Without this the system treats the tunnel as standing on nothing: it
+     * cannot follow the VPN across a network change, and it accounts for its
+     * traffic against no transport. Passing null hands the decision back to the
+     * platform's default network.
+     */
+    private fun publishUnderlyingNetwork(network: Network?) {
+        runCatching { setUnderlyingNetworks(network?.let { arrayOf(it) }) }
+            .onFailure { AppLog.log("could not publish the underlying network: ${it.message}") }
+    }
+
     private fun watchNetwork() {
         if (networkCallback != null) return
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
         val cb = object : ConnectivityManager.NetworkCallback() {
             private var known: Network? = null
+
             override fun onAvailable(network: Network) {
                 val previous = known
                 known = network
-                if (previous != null && previous != network) {
+                publishUnderlyingNetwork(network)
+                // Redial when the network we were on went away and something
+                // came back, as well as when it was swapped underneath us. Only
+                // comparing identities missed the first case entirely: after a
+                // gap the same network can return, and the socket left over
+                // from before it went is dead either way.
+                if (previous == null || previous != network) {
                     AppLog.log("network path changed; redialing now")
                     bridge?.networkChanged()
                 }
             }
+
+            override fun onLost(network: Network) {
+                if (network != known) return
+                known = null
+                AppLog.log("the network underneath went away")
+            }
         }
-        runCatching { cm.registerNetworkCallback(request, cb) }
-            .onSuccess { networkCallback = cb }
+        // The default network, rather than any network matching a request: what
+        // the tunnel rides on is whatever the system would route through, and
+        // that is the thing worth following.
+        runCatching { cm.registerDefaultNetworkCallback(cb) }
+            .onSuccess {
+                networkCallback = cb
+                publishUnderlyingNetwork(cm.activeNetwork)
+            }
     }
 
     private fun onLinkState(state: GoBridge.LinkState) {
@@ -401,6 +463,10 @@ class TunnelService : VpnService() {
         // Publish Disconnected first and close the state gate. Link callbacks
         // already queued by the Go core can no longer overwrite it.
         val wasRunning = status.stop()
+        // Ahead of the early return, and idempotent: a lock outliving the
+        // tunnel would keep the device from sleeping with nothing to show for
+        // it, which is worse than the problem it was taken for.
+        releaseCpu()
         if (!wasRunning) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()

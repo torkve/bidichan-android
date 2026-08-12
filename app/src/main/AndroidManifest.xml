@@ -8,6 +8,11 @@
          An install-time permission: nothing is prompted for at runtime. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Holds the CPU awake while the tunnel is up. Without it the device
+         suspends between wakeups, the core's keepalive timer stops firing, and
+         the peer drops a session it has heard nothing from — so the tunnel is
+         gone by the time the screen comes back on. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The tunnel keeps running while the screen is off; the system requires
          this type to be declared for a service that stays up in the background. -->
