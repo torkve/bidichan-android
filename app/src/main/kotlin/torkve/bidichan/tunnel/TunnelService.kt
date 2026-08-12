@@ -448,7 +448,7 @@ class TunnelService : VpnService() {
         val b = bridge ?: return
         val p = profile ?: return
         submit {
-            if (!status.isRunning) return@execute
+            if (!status.isRunning) return@submit
             AppLog.log("session reestablished: restoring channels")
             restoreTunChannel(b, p)
             replayChannels(b)
