@@ -1,6 +1,7 @@
 package torkve.bidichan.tunnel
 
 import android.util.Log
+import torkve.bidichan.core.AppLog
 import torkve.bidichan.go.mobile.Client
 import torkve.bidichan.go.mobile.LinkObserver
 import torkve.bidichan.go.mobile.Logger
@@ -62,12 +63,28 @@ class GoBridge {
      *   that was lost, meaning channels have to be reopened.
      */
     fun observeLink(onState: (LinkState) -> Unit, onSession: (Boolean) -> Unit) {
+        // Nothing may throw out of these. The core calls them from its own
+        // goroutines, and an exception crossing back into Go is delivered to
+        // nobody — it becomes a panic, and a panic takes the process down. From
+        // the outside that is a native crash while the tunnel is up, at a
+        // moment nobody can reproduce, with the log gone because the process
+        // went with it.
+        //
+        // The realistic thrower is the service having been torn down under us:
+        // its executor is shut down in onDestroy, so a callback arriving a
+        // moment later is rejected. Late callbacks are ordinary here — the core
+        // does not stop the instant it is asked to — so they are dropped rather
+        // than treated as faults.
         val obs = object : LinkObserver {
             override fun onLinkState(state: String?) {
-                LinkState.parse(state)?.let(onState)
+                runCatching { LinkState.parse(state)?.let(onState) }
+                    .onFailure { AppLog.log("dropped a link-state callback: $it") }
             }
 
-            override fun onSessionUp(reestablished: Boolean) = onSession(reestablished)
+            override fun onSessionUp(reestablished: Boolean) {
+                runCatching { onSession(reestablished) }
+                    .onFailure { AppLog.log("dropped a session-up callback: $it") }
+            }
         }
         observer = obs
         client.setLinkObserver(obs)
@@ -109,7 +126,18 @@ class GoBridge {
 
         // The binding maps Go's int to a Java long, so the descriptor arrives
         // wider than the platform call takes.
-        val p = SocketProtector { fd -> protect(fd.toInt()) }
+        //
+        // Guarded for the same reason as the observer above, and with more
+        // cause: this runs on every dial the core makes, including the redials
+        // it makes by itself long after the screen went off, and it calls into
+        // a VpnService that may by then have been torn down. Refusing to exempt
+        // the socket fails one dial; letting the exception through ends the
+        // process.
+        val p = SocketProtector { fd ->
+            runCatching { protect(fd.toInt()) }
+                .onFailure { AppLog.log("could not exempt the socket: $it") }
+                .getOrDefault(false)
+        }
         protector = p
         client.start(cfg, tunFd.toLong(), p)
     }

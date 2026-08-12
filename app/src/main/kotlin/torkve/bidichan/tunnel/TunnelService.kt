@@ -200,7 +200,7 @@ class TunnelService : VpnService() {
         openDefaultChannels(b, p)
         updateNotification("Connected")
         watchNetwork()
-        io.execute { awaitEnd(b) }
+        submit { awaitEnd(b) }
     }
 
     /**
@@ -341,6 +341,21 @@ class TunnelService : VpnService() {
         }.onFailure { AppLog.log("could not hold the cpu awake: ${it.message}") }
     }
 
+    /**
+     * Runs work on the io pool, or drops it if the pool is gone.
+     *
+     * onDestroy shuts the pool down, and the core keeps calling back for a
+     * moment after that — it does not stop the instant it is asked to. A bare
+     * execute would throw RejectedExecutionException, and when the caller is a
+     * Go goroutine there is nobody to deliver that to: it becomes a panic and
+     * ends the process. There is nothing to do about work arriving after the
+     * service is finished with anyway, so dropping it is both safe and honest.
+     */
+    private fun submit(task: () -> Unit) {
+        runCatching { io.execute(task) }
+            .onFailure { AppLog.log("dropped work after shutdown: ${it.javaClass.simpleName}") }
+    }
+
     private fun releaseCpu() {
         wakeLock?.let { wl -> runCatching { if (wl.isHeld) wl.release() } }
         wakeLock = null
@@ -432,7 +447,7 @@ class TunnelService : VpnService() {
         if (!reestablished || !status.isRunning) return
         val b = bridge ?: return
         val p = profile ?: return
-        io.execute {
+        submit {
             if (!status.isRunning) return@execute
             AppLog.log("session reestablished: restoring channels")
             restoreTunChannel(b, p)

@@ -37,6 +37,47 @@ object ExitReason {
                     " at ${when_.format(Date(e.timestamp))}" +
                     (e.description?.let { " — $it" } ?: ""),
             )
+            logTrace(e)
+        }
+    }
+
+    /**
+     * The tombstone, for the exits that come with one.
+     *
+     * "Crashed in native code" names the room the fire was in and nothing more.
+     * For a crash or an ANR the system keeps the trace that says where, and for
+     * a Go core that means the panic text and the function it died in — the
+     * difference between a week of guessing and an afternoon's fix. Nobody can
+     * fetch this off a user's phone by hand, so it goes in the log the user can
+     * already send.
+     */
+    private fun logTrace(e: ApplicationExitInfo) {
+        val wanted = e.reason == ApplicationExitInfo.REASON_CRASH_NATIVE ||
+            e.reason == ApplicationExitInfo.REASON_CRASH ||
+            e.reason == ApplicationExitInfo.REASON_ANR
+        if (!wanted) return
+        val text = runCatching {
+            e.traceInputStream?.bufferedReader()?.use { it.readText() }
+        }.getOrNull()
+        if (text.isNullOrBlank()) {
+            AppLog.log("  (the system kept no trace for it)")
+            return
+        }
+        // A tombstone runs to hundreds of lines of register dumps and maps.
+        // What identifies the fault is the abort message and the top of the
+        // crashing stack, so keep those and say what was dropped rather than
+        // flooding a log someone has to read on a phone.
+        val lines = text.lines()
+        val interesting = lines.filter { line ->
+            val t = line.trim()
+            t.startsWith("signal ") || t.startsWith("Abort message") ||
+                t.startsWith("#") || t.startsWith("panic") ||
+                t.startsWith("fatal error") || t.startsWith("goroutine ")
+        }
+        val shown = (if (interesting.isEmpty()) lines else interesting).take(40)
+        shown.forEach { AppLog.log("  ${it.trim()}") }
+        if (lines.size > shown.size) {
+            AppLog.log("  (… ${lines.size - shown.size} more lines of trace)")
         }
     }
 
