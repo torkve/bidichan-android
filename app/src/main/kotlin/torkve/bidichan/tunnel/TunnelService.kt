@@ -322,16 +322,25 @@ class TunnelService : VpnService() {
         val cb = object : ConnectivityManager.NetworkCallback() {
             private var known: Network? = null
 
+            /**
+             * Set when the network we were on went away, so its return is told
+             * apart from the callback that arrives merely because we just
+             * registered — the latter must not redial a link that is fine.
+             */
+            private var wentAway = false
+
             override fun onAvailable(network: Network) {
                 val previous = known
                 known = network
                 publishUnderlyingNetwork(network)
-                // Redial when the network we were on went away and something
-                // came back, as well as when it was swapped underneath us. Only
-                // comparing identities missed the first case entirely: after a
-                // gap the same network can return, and the socket left over
-                // from before it went is dead either way.
-                if (previous == null || previous != network) {
+                val returned = wentAway
+                wentAway = false
+                // Redial when the path was swapped underneath us, and when the
+                // one we were on came back after a gap: the same network can
+                // return, and either way the socket from before it went is
+                // dead. Not on the first callback, which says only that we are
+                // now listening.
+                if ((previous != null && previous != network) || returned) {
                     AppLog.log("network path changed; redialing now")
                     bridge?.networkChanged()
                 }
@@ -340,6 +349,7 @@ class TunnelService : VpnService() {
             override fun onLost(network: Network) {
                 if (network != known) return
                 known = null
+                wentAway = true
                 AppLog.log("the network underneath went away")
             }
         }
