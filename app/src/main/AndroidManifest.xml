@@ -13,6 +13,9 @@
          the peer drops a session it has heard nothing from — so the tunnel is
          gone by the time the screen comes back on. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Required to persist the watchdog job across a reboot; nothing is
+         started at boot on its own, only a tunnel the user left running. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Lets the app ask to be left out of battery optimisation. Doze documents
          that it *ignores wake locks* and suspends network access, so the lock
          above is overridden by it: without this exemption the tunnel dies a
@@ -64,6 +67,13 @@
             android:authorities="${applicationId}.codes"
             android:exported="false"
             android:grantUriPermissions="true" />
+
+        <!-- Notices a tunnel that is no longer running and starts it again.
+             BIND_JOB_SERVICE is the fixed platform permission for a job. -->
+        <service
+            android:name=".tunnel.TunnelWatchdog"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- The tunnel host. BIND_VPN_SERVICE is the fixed platform permission
              name for a service that provides the system's packet interface. -->

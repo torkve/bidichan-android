@@ -63,9 +63,10 @@ class TunnelService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                // Deliberate: forget the profile so a later restart of this
-                // service does not bring back a tunnel the user switched off.
+                // Deliberate: forget the profile and stop watching, so nothing
+                // brings back a tunnel the user switched off.
                 forgetWanted()
+                TunnelWatchdog.cancel(this)
                 shutdown()
                 return START_NOT_STICKY
             }
@@ -83,6 +84,9 @@ class TunnelService : VpnService() {
             AppLog.log("restarted by the system after the process went away; reconnecting")
         }
         rememberWanted(profileId)
+        // Scheduled from here rather than on a successful connect: a tunnel
+        // that failed to come up is exactly one worth trying again.
+        TunnelWatchdog.schedule(this, profileId)
         if (!status.start()) {
             AppLog.log("already running")
             return START_REDELIVER_INTENT
