@@ -150,6 +150,12 @@ class TunnelService : VpnService() {
         AppLog.log("peer is up")
         // Before the channels, so nothing below races the device suspending.
         holdCpuAwake()
+        // Recorded on every connect so a report of "it went offline in my
+        // pocket" carries its own answer: without the exemption, Doze ignores
+        // the lock above and the tunnel will not outlast the screen.
+        if (!BatteryExemption.isExempt(this)) {
+            AppLog.log("battery optimisation is on for this app — sleep will end the tunnel")
+        }
         if (p.enableTun) {
             runCatching { openTunChannel(b, p) }
                 .onFailure { AppLog.log("packet channel: ${it.message}") }

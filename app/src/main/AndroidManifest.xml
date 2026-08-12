@@ -13,6 +13,12 @@
          the peer drops a session it has heard nothing from — so the tunnel is
          gone by the time the screen comes back on. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Lets the app ask to be left out of battery optimisation. Doze documents
+         that it *ignores wake locks* and suspends network access, so the lock
+         above is overridden by it: without this exemption the tunnel dies a
+         quarter of an hour after the screen goes off, whatever we hold. The
+         user is asked, never forced — the system dialog is the only way in. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The tunnel keeps running while the screen is off; the system requires
          this type to be declared for a service that stays up in the background. -->

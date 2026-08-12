@@ -43,6 +43,12 @@ import torkve.bidichan.core.ChannelConfig
 import torkve.bidichan.core.ChannelSnapshot
 import torkve.bidichan.core.Profile
 import torkve.bidichan.core.ProfileLinking
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import torkve.bidichan.tunnel.BatteryExemption
 
 /** Where the user is. Small enough to keep explicit rather than pull in a router. */
 private sealed interface Screen {
@@ -205,6 +211,7 @@ private fun ProfileListScreen(
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             StatusRow(status)
+            BatteryExemptionNotice()
             error?.let { message ->
                 Card(Modifier.fillMaxWidth().padding(12.dp)) {
                     Column(Modifier.padding(12.dp)) {
@@ -465,6 +472,50 @@ private fun ChannelConfigEditor(
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().padding(16.dp)) {
             ChannelFields(config) { config = it }
+        }
+    }
+}
+
+/**
+ * Asks to be excused from battery optimisation, and says why.
+ *
+ * Shown only while the exemption is missing, and rechecked whenever the screen
+ * is resumed so it disappears the moment it is granted — the answer arrives
+ * from a system dialog, not from anything we can observe directly.
+ */
+@Composable
+private fun BatteryExemptionNotice() {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var exempt by remember { mutableStateOf(true) }
+
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) exempt = BatteryExemption.isExempt(context)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    if (exempt) return
+    Card(Modifier.fillMaxWidth().padding(12.dp)) {
+        Column(Modifier.padding(12.dp)) {
+            Text("The tunnel will not survive sleep", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Android suspends this app a quarter of an hour after the screen goes off, " +
+                    "which ends the connection. Excusing it from battery optimisation is the " +
+                    "only way to keep the tunnel up while the phone is idle.",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            TextButton(onClick = {
+                // The dialog is refused outright on some builds; fall back to
+                // the settings list, where it can still be granted by hand.
+                val asked = runCatching {
+                    context.startActivity(BatteryExemption.requestIntent(context))
+                }.isSuccess
+                if (!asked) runCatching { context.startActivity(BatteryExemption.settingsIntent()) }
+            }) { Text("Allow it to run") }
         }
     }
 }
