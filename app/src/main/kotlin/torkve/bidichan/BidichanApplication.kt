@@ -2,6 +2,7 @@ package torkve.bidichan
 
 import android.app.Application
 import torkve.bidichan.core.AppLog
+import torkve.bidichan.core.ExitReason
 
 /**
  * Exists to give the log somewhere to live before anything else runs.
@@ -14,5 +15,8 @@ class BidichanApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         AppLog.attach(this)
+        // Straight after the marker, so the log reads: the tunnel stopped
+        // mid-sentence, a process started, and this is what took the last one.
+        ExitReason.logPrevious(this)
     }
 }
