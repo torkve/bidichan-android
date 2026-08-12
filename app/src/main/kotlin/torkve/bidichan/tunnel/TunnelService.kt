@@ -63,18 +63,29 @@ class TunnelService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
+                // Deliberate: forget the profile so a later restart of this
+                // service does not bring back a tunnel the user switched off.
+                forgetWanted()
                 shutdown()
                 return START_NOT_STICKY
             }
         }
-        val profileId = intent?.getStringExtra(EXTRA_PROFILE_ID)
+        // The system hands back a null intent when it restarts a service whose
+        // process it killed, and the profile went with it. Remembering which
+        // one was wanted is what lets the tunnel come back by itself rather
+        // than staying down until someone opens the app and notices.
+        val profileId = intent?.getStringExtra(EXTRA_PROFILE_ID) ?: wantedProfileId()
         if (profileId == null) {
             AppLog.log("start without a profile; ignoring")
             return START_NOT_STICKY
         }
+        if (intent?.getStringExtra(EXTRA_PROFILE_ID) == null) {
+            AppLog.log("restarted by the system after the process went away; reconnecting")
+        }
+        rememberWanted(profileId)
         if (!status.start()) {
             AppLog.log("already running")
-            return START_STICKY
+            return START_REDELIVER_INTENT
         }
         startForeground(NOTIFICATION_ID, notification(status.value))
         io.execute {
@@ -88,8 +99,30 @@ class TunnelService : VpnService() {
                 fail("could not connect: ${t.message ?: t::class.java.simpleName}")
             }
         }
-        return START_STICKY
+        // REDELIVER rather than STICKY: a sticky restart arrives with a null
+        // intent, so the profile is lost and the service used to give up on
+        // the spot. Redelivery brings the original intent back, extras and all.
+        return START_REDELIVER_INTENT
     }
+
+    /**
+     * The profile the user last asked for, kept where it outlives the process.
+     *
+     * Plain preferences, not the encrypted store: an identifier is not a
+     * secret, and this has to be readable the instant the service restarts.
+     */
+    private fun wanted() = getSharedPreferences("tunnel-state", Context.MODE_PRIVATE)
+
+    private fun rememberWanted(profileId: String) {
+        runCatching { wanted().edit().putString(KEY_WANTED_PROFILE, profileId).apply() }
+    }
+
+    private fun forgetWanted() {
+        runCatching { wanted().edit().remove(KEY_WANTED_PROFILE).apply() }
+    }
+
+    private fun wantedProfileId(): String? =
+        runCatching { wanted().getString(KEY_WANTED_PROFILE, null) }.getOrNull()
 
     // MARK: - Bring-up
 
@@ -577,6 +610,9 @@ class TunnelService : VpnService() {
         private const val NOTIFICATION_ID = 1
         const val ACTION_STOP = "torkve.bidichan.STOP"
         const val EXTRA_PROFILE_ID = "profileId"
+
+        /** The profile to bring back if the system restarts us on its own. */
+        private const val KEY_WANTED_PROFILE = "wantedProfile"
 
         /** Coarse state for the UI; the service is the authority. */
         @Volatile
