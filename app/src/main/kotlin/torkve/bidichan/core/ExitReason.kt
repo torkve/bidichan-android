@@ -56,29 +56,63 @@ object ExitReason {
             e.reason == ApplicationExitInfo.REASON_CRASH ||
             e.reason == ApplicationExitInfo.REASON_ANR
         if (!wanted) return
-        val text = runCatching {
-            e.traceInputStream?.bufferedReader()?.use { it.readText() }
+        val bytes = runCatching {
+            e.traceInputStream?.use { it.readBytes() }
         }.getOrNull()
-        if (text.isNullOrBlank()) {
+        if (bytes == null || bytes.isEmpty()) {
             AppLog.log("  (the system kept no trace for it)")
             return
         }
-        // A tombstone runs to hundreds of lines of register dumps and maps.
-        // What identifies the fault is the abort message and the top of the
-        // crashing stack, so keep those and say what was dropped rather than
-        // flooding a log someone has to read on a phone.
-        val lines = text.lines()
-        val interesting = lines.filter { line ->
-            val t = line.trim()
-            t.startsWith("signal ") || t.startsWith("Abort message") ||
-                t.startsWith("#") || t.startsWith("panic") ||
-                t.startsWith("fatal error") || t.startsWith("goroutine ")
+        val found = interestingStrings(bytes)
+        if (found.isEmpty()) {
+            AppLog.log("  (a trace was kept but nothing in it was readable)")
+            return
         }
-        val shown = (if (interesting.isEmpty()) lines else interesting).take(40)
-        shown.forEach { AppLog.log("  ${it.trim()}") }
-        if (lines.size > shown.size) {
-            AppLog.log("  (… ${lines.size - shown.size} more lines of trace)")
+        found.take(30).forEach { AppLog.log("  $it") }
+    }
+
+    /**
+     * The readable parts of a tombstone.
+     *
+     * A native crash does not hand back text: `traceInputStream` gives the
+     * tombstone as a protocol buffer, so reading it as a string produces the
+     * register dump as mojibake and buries the one line that matters. Rather
+     * than carry a schema for a format we only ever want four things out of,
+     * this pulls the printable runs and keeps the ones that identify a fault —
+     * for a Go core, the panic text and the frames around it.
+     *
+     * The signal, the thread it fired on, and the abort message are what
+     * distinguish a panic in our own code from one in the platform, so those
+     * are what the filter is built around.
+     */
+    private fun interestingStrings(bytes: ByteArray): List<String> {
+        val runs = mutableListOf<String>()
+        val current = StringBuilder()
+        for (b in bytes) {
+            val c = b.toInt() and 0xFF
+            if (c in 0x20..0x7E) {
+                current.append(c.toChar())
+            } else {
+                if (current.length >= 8) runs.add(current.toString())
+                current.setLength(0)
+            }
         }
+        if (current.length >= 8) runs.add(current.toString())
+
+        val telling = Regex(
+            "panic|fatal error|goroutine|runtime\\.|SIGSEGV|SIGABRT|SIGBUS|SIGILL|" +
+                "signal |abort|bidichan|/internal/|\\.go:|Exception|pool-\\d+-thread",
+            RegexOption.IGNORE_CASE,
+        )
+        // Paths and mapping noise carry the same words without saying anything.
+        val noise = Regex("^/(system|apex|vendor|data/app)/|^\\[|\\.(so|apk|oat|vdex|art)\\b")
+        return runs.asSequence()
+            .map { it.trim() }
+            .filter { it.length in 8..300 }
+            .filter { telling.containsMatchIn(it) }
+            .filterNot { noise.containsMatchIn(it) }
+            .distinct()
+            .toList()
     }
 
     /**

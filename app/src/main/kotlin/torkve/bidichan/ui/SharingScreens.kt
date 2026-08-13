@@ -336,7 +336,7 @@ private fun Detail(label: String, value: String) {
  * often the only part the receiving side can act on directly.
  */
 private fun shareProfile(context: Context, link: String, code: ImageBitmap?) {
-    val uri = code?.let { pngBytes(it) }?.let { SharedCodeProvider.offer(context, it) }
+    val uri = code?.let { pngBytes(it) }?.let { SharedPayloadProvider.offer(context, it, "profile-code.png", "image/png") }
     val intent = Intent(Intent.ACTION_SEND).apply {
         if (uri == null) {
             type = "text/plain"

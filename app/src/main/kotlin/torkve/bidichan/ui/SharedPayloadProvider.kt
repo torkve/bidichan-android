@@ -26,15 +26,12 @@ import java.io.FileOutputStream
  * with `grantUriPermissions` means the only way to reach them is the temporary
  * grant that rides on the share intent.
  */
-class SharedCodeProvider : ContentProvider() {
+class SharedPayloadProvider : ContentProvider() {
 
     companion object {
-        private const val PATH = "code.png"
-        private const val MIME = "image/png"
-
-        /** Named for what it is, not for the profile: this shows up in the
-         *  other app's UI, and the profile's name is nobody else's business. */
-        private const val DISPLAY_NAME = "profile-code.png"
+        /** One payload at a time; the path is constant and the name travels
+         *  beside it, since what varies is what is being shared, not where. */
+        private const val PATH = "payload"
 
         /**
          * The code currently on offer, if any.
@@ -47,18 +44,30 @@ class SharedCodeProvider : ContentProvider() {
         @Volatile
         private var payload: ByteArray? = null
 
-        /** Publishes `png` and returns the URI to hand out. */
-        fun offer(context: Context, png: ByteArray): Uri {
+        @Volatile
+        private var displayName: String = "payload"
+
+        @Volatile
+        private var mime: String = "application/octet-stream"
+
+        /**
+         * Publishes `bytes` and returns the URI to hand out. `name` is what the
+         * receiving app shows and what a saved file is called, so it should say
+         * what the thing is without saying whose it is.
+         */
+        fun offer(context: Context, bytes: ByteArray, name: String, type: String): Uri {
             // Copied, because the array is read later from another thread and
             // must not change under it.
-            payload = png.copyOf()
-            return Uri.parse("content://${context.packageName}.codes/$PATH")
+            payload = bytes.copyOf()
+            displayName = name
+            mime = type
+            return Uri.parse("content://${context.packageName}.shared/$PATH")
         }
     }
 
     override fun onCreate(): Boolean = true
 
-    override fun getType(uri: Uri): String = MIME
+    override fun getType(uri: Uri): String = mime
 
     /**
      * Answers what an app asks before it reads. Gmail and Telegram both query
@@ -78,7 +87,7 @@ class SharedCodeProvider : ContentProvider() {
         val row = cursor.newRow()
         for (column in columns) {
             when (column) {
-                OpenableColumns.DISPLAY_NAME -> row.add(DISPLAY_NAME)
+                OpenableColumns.DISPLAY_NAME -> row.add(displayName)
                 OpenableColumns.SIZE -> row.add(data.size.toLong())
                 // A column we do not know: answer null rather than leaving the
                 // row short, which would not line up with the projection.
@@ -90,7 +99,7 @@ class SharedCodeProvider : ContentProvider() {
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {
         val data = payload ?: return null
-        return openPipeHelper(uri, MIME, null, data) { output, _, _, _, bytes ->
+        return openPipeHelper(uri, mime, null, data) { output, _, _, _, bytes ->
             // This runs on a thread the framework owns, so nothing may escape
             // it: a receiver that closes early gives a broken pipe, and an
             // exception here would take the app down rather than the share.

@@ -55,7 +55,8 @@
             </intent-filter>
         </activity>
 
-        <!-- Hands the scannable code to whichever app the user shares it with.
+        <!-- Hands whatever the user is sharing — a scannable code, the log —
+             to the app they chose.
              An image can only cross an app boundary as a content URI, so there
              has to be a provider; this one serves the bytes out of memory and
              never touches the filesystem, because the code encodes a link that
@@ -63,8 +64,8 @@
              `grantUriPermissions` means the only way in is the temporary grant
              riding on the share intent. -->
         <provider
-            android:name=".ui.SharedCodeProvider"
-            android:authorities="${applicationId}.codes"
+            android:name=".ui.SharedPayloadProvider"
+            android:authorities="${applicationId}.shared"
             android:exported="false"
             android:grantUriPermissions="true" />
 

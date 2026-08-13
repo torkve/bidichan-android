@@ -33,6 +33,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import torkve.bidichan.AppModel
+import android.content.ClipData
+import android.content.Context
+import android.content.Intent
+import androidx.compose.ui.platform.LocalContext
 
 /**
  * An interactive shell on the peer. Deliberately a transcript with a line
@@ -100,6 +104,7 @@ fun ShellScreen(model: AppModel, onBack: () -> Unit) {
 fun LogScreen(model: AppModel, onBack: () -> Unit) {
     var text by remember { mutableStateOf(model.logText()) }
     val scroll = rememberScrollState()
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -111,6 +116,10 @@ fun LogScreen(model: AppModel, onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    TextButton(
+                        onClick = { shareLog(context, text) },
+                        enabled = text.isNotEmpty(),
+                    ) { Text("Share") }
                     TextButton(onClick = { text = model.logText() }) { Text("Refresh") }
                     TextButton(onClick = {
                         model.clearLog()
@@ -128,4 +137,45 @@ fun LogScreen(model: AppModel, onBack: () -> Unit) {
             style = MaterialTheme.typography.bodySmall,
         )
     }
+}
+
+/**
+ * Sends the log as a file.
+ *
+ * A file rather than message text: the log runs to a couple of thousand lines,
+ * and a chat app given that much text truncates it or refuses it outright — at
+ * which point the person diagnosing gets a screenshot of a scrollback, which is
+ * the thing this exists to avoid. As an attachment it arrives whole.
+ *
+ * The pre-shared key is never written to the log, and neither is a profile
+ * link. What is there is the server's address and hostname, and the upgrade
+ * path — which the core derives from the key when the profile does not set one.
+ * The derivation is one-way, so the path gives up nothing about the key, but it
+ * does say where this particular server answers rather than serving its decoy.
+ * Worth knowing before sending it to a stranger; unremarkable when sending it
+ * to whoever runs the server.
+ */
+private fun shareLog(context: Context, text: String) {
+    if (text.isEmpty()) return
+    val uri = runCatching {
+        SharedPayloadProvider.offer(
+            context,
+            text.toByteArray(Charsets.UTF_8),
+            "bidichan-log.txt",
+            "text/plain",
+        )
+    }.getOrNull()
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        if (uri == null) {
+            // Better a truncated log than none: fall back to the text itself.
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        } else {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newUri(context.contentResolver, "bidichan log", uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+    runCatching { context.startActivity(Intent.createChooser(intent, "Share the log")) }
 }
