@@ -48,8 +48,15 @@ class GoBridge {
     }
 
     init {
+        // Guarded like the other two, and it is the one called most: every line
+        // the core writes comes through here, from whichever goroutine wrote
+        // it. Under memory pressure even trimming a long line can throw, and an
+        // OutOfMemoryError crossing back into Go ends the process just as
+        // surely as an exception does.
         val sink = Logger { line ->
-            line?.trim()?.takeIf { it.isNotEmpty() }?.let { Log.i(TAG, "go: $it") }
+            runCatching {
+                line?.trim()?.takeIf { it.isNotEmpty() }?.let { Log.i(TAG, "go: $it") }
+            }
         }
         logger = sink
         client.setLogger(sink)
